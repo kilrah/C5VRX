@@ -131,6 +131,8 @@ bool receiver_paused(void);
 bool receiver_pause(const char *tag);
 void receiver_resume(void);
 void receiver_set_gain(uint8_t gain);
+/* rf_set_gain() wall time of the gain owner's writes since the last call. */
+void receiver_write_time(uint32_t *n, uint32_t *sum_us, uint32_t *max_us);
 void receiver_print(void);
 void receiver_print_map(void);   /* console M: GAINMAP line */
 /* Gain mode: GAIN_MODE_LEVEL (agc.h, the measured-quality AGC, the
@@ -284,6 +286,7 @@ uint32_t menu_lcd_seq(void);   /* odd while those rows are being redrawn */
 void lcd_start(void);
 void lcd_print(void);
 void lcd_dump(void);   /* console V */
+void lcd_quiet_toggle(void);   /* console J (bench) */
 #endif
 
 /* ---- profile.c ---- */

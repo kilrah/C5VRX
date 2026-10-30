@@ -60,6 +60,13 @@ static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t s_panel;
 static TaskHandle_t s_flush_task, s_grab_task;
 static volatile bool s_picture;          /* s_img holds something to show */
+static volatile bool s_quiet;            /* bench (console J): no SPI traffic, no grabbing */
+
+void lcd_quiet_toggle(void)
+{
+    s_quiet = !s_quiet;
+    printf("LCD quiet=%u (no panel SPI and no grabbing while 1)\n", s_quiet);
+}
 static uint16_t s_menu_lut[64];          /* DAC code -> panel RGB565 */
 static uint16_t s_menu_x[LCD_W];         /* panel column -> logical menu pixel */
 
@@ -73,6 +80,7 @@ static struct {
     uint32_t grabs, complete, rows, late, substituted, nosync, wide, vslips, vmisses, cpu_us, flushes;
     int grab_ms, acquire_ms, max_stall_us;
     uint32_t stalls_1ms, stalls_5ms, stalls_20ms;   /* grabs whose longest stall reached that */
+    uint32_t stalls_3ms_write, stalls_3ms_nowrite;  /* ... 3 ms or more, with or without a gain write in the grab */
     bool pal, tb_bad;
     float line_us, jitter_ns, carrier_mhz;
     const char *error;
@@ -189,6 +197,7 @@ static void flush_task(void *arg)
         /* A new frame wakes this task; the menu redraws at 20 Hz. */
         const bool woken = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50)) != 0;
         const uint8_t (*ui)[MENU_UI_BYTES] = menu_lcd_rows();
+        if (s_quiet) continue;
         if (ui) flush(ui);
         else if (woken && s_picture) flush(NULL);
     }
@@ -258,7 +267,7 @@ static void follow_levels(void)
 /* The grabber also rests while the button is held: the control task, below
  * it in this build, counts its 50 ms ticks to time a press (short = next,
  * 0.6 s = menu) and must run at its full rate meanwhile. */
-static bool grab_abort(void) { return s_menu_active || gpio_get_level(PIN_BOOT) == 0; }
+static bool grab_abort(void) { return s_menu_active || s_quiet || gpio_get_level(PIN_BOOT) == 0; }
 
 /* A row missed for more than ROW_KEEP_PICTURES pictures (its lines left the
  * ring while the receiver tasks held the CPU, several grabs running) combs
@@ -298,7 +307,12 @@ static void grab_task(void *arg)
             grab_unlock();
         }
         grab_info_t info;
+        const int64_t grab_t0 = esp_timer_get_time();
         const int rows = grab_frame(&s_img[0][0], &info, GRAB_TIMEOUT_MS);
+        if (info.max_stall_us >= 3000) {
+            if (s_last_gain_write_us >= grab_t0) ++s_stats.stalls_3ms_write;
+            else ++s_stats.stalls_3ms_nowrite;
+        }
         ++s_stats.grabs;
         s_stats.rows += (uint32_t)rows;
         s_stats.late += (uint32_t)info.late;
@@ -415,6 +429,11 @@ void lcd_print(void)
            s_grab_task ? (unsigned)uxTaskGetStackHighWaterMark(s_grab_task) : 0u,
            s_flush_task ? (unsigned)uxTaskGetStackHighWaterMark(s_flush_task) : 0u, s_stats.max_stall_us,
            (unsigned long)s_stats.stalls_1ms, (unsigned long)s_stats.stalls_5ms, (unsigned long)s_stats.stalls_20ms);
+    uint32_t writes, write_sum_us, write_max_us;
+    receiver_write_time(&writes, &write_sum_us, &write_max_us);
+    printf("LCD_GAINW writes=%lu write_us_mean=%lu write_us_max=%lu stalls>=3ms_with_write=%lu without=%lu\n",
+           (unsigned long)writes, (unsigned long)(writes ? write_sum_us / writes : 0u), (unsigned long)write_max_us,
+           (unsigned long)s_stats.stalls_3ms_write, (unsigned long)s_stats.stalls_3ms_nowrite);
     memset(&s_stats, 0, sizeof(s_stats));
     s_stats.t0 = now;
 #if configGENERATE_RUN_TIME_STATS

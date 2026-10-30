@@ -290,6 +290,14 @@ void receiver_resume(void)
     s_paused = false;
 }
 
+/* Wall time of rf_set_gain() in the gain owner's writes (LCD build: T). */
+static struct { uint32_t n, sum_us, max_us; } s_write_time;
+void receiver_write_time(uint32_t *n, uint32_t *sum_us, uint32_t *max_us)
+{
+    *n = s_write_time.n; *sum_us = s_write_time.sum_us; *max_us = s_write_time.max_us;
+    s_write_time.n = s_write_time.sum_us = s_write_time.max_us = 0;
+}
+
 /* Gain write by the owner of a pause (calibration, scan). */
 void receiver_set_gain(uint8_t gain)
 {
@@ -341,7 +349,13 @@ static void apply_target(uint8_t target, uint32_t control, uint32_t phy)
         return;
     }
     /* A busy or changed PHY must not leave software ahead of hardware. */
-    if (!rf_set_gain(target, phy)) {
+    const int64_t write_t0 = esp_timer_get_time();
+    const bool written = rf_set_gain(target, phy);
+    const uint32_t write_us = (uint32_t)(esp_timer_get_time() - write_t0);
+    ++s_write_time.n;
+    s_write_time.sum_us += write_us;
+    if (write_us > s_write_time.max_us) s_write_time.max_us = write_us;
+    if (!written) {
         ++s_refuse[5];
         dg_sync_applied(&s_gain, s_current_gain, (uint64_t)esp_timer_get_time());
         phy_end_actuator();
