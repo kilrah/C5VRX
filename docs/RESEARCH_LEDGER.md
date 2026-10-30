@@ -666,13 +666,14 @@ converts them (or the menu's logical-pixel UI rows) to RGB565 and sends
 keeps running with no pins, so its verified restarts are unchanged; it no
 longer reaches a display. To give the grabber the CPU this build runs the
 gain observer every 2 ms instead of 200 us and the control task below the
-grabber (it runs in a 15 ms rest after every picture). This extends
+grabber (it runs in a 10 ms rest after every picture), with its AFC window
+only every 300 ms while locked (17 ms of CPU each). This extends
 KonradIT's `tembed-link` UART video link (CPU grabber on the same ring,
 measured 24-25 PAL frames/s on a XIAO) and follows zerowidth's `p4usb`
 direction of a software decoder; it is not the C5VRX-1 CPU-paced route
 (the CPU never paces IQ here). Evidence: on one board, a live PAL picture
-from a bench VTX (B5, -38 dBm), 170 of 195 pictures complete in 13 s (12.9
-complete pictures/s), sync jitter 23 ns, AFC locked; a marker probe showing
+from a bench VTX (B5, -38 dBm), 240 of 256 pictures complete in 18 s (13.3
+complete pictures/s), sync jitter 15 ns, AFC locked; a marker probe showing
 the RX descriptor register one node ahead of the data (docs/FINDINGS.md);
 host simulation of `grab.c` on synthetic FM PAL/NTSC. Not measured: NTSC,
 weak signal, the slower gain loop's fade behaviour, or any range.

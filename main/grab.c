@@ -348,9 +348,17 @@ static void levels_changed(void)
     }
 }
 
+/* The AFC keeps the video swing within a few MHz of the tuned frequency. A
+ * centre beyond CENTER_MAX can only come from a window of noise or clipping
+ * (a transmitter at the antenna); near +/-20 MHz the phase steps alias and
+ * the re-centring settled on the alias for good (board 2026-10-30: centre
+ * 19.5-21.6 MHz, no horizontal sync for 80 s while the receiver saw PAL).
+ * Start again from the tuned frequency instead. */
+#define CENTER_MAX (8.0 * 256.0 / SPS)          /* 8 MHz in phase units per sample */
+
 static void set_center(double c)
 {
-    s_center = c;
+    s_center = c > CENTER_MAX || c < -CENTER_MAX ? 0.0 : c;
     levels_changed();
 }
 

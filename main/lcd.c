@@ -45,8 +45,8 @@
 #define GRAB_TIMEOUT_MS 70      /* ~3.5 PAL fields: the rows the first, partial field missed get the third */
 #define ROW_KEEP_PICTURES 1     /* a missed row shows the previous picture's row this long, then is interpolated */
 #define ROW_BLEND_GAP 8         /* ... but only between fresh rows at most this far apart */
-#define GRAB_REST_MS 15         /* after every picture: the tasks below the grabber (control: ~10 ms per tick) */
-#define NO_VIDEO_GRABS 3        /* failed grabs before the NO VIDEO screen */
+#define GRAB_REST_MS 10         /* after every picture: the tasks below the grabber (control: ~1 ms per tick, ~20 ms per AFC window) */
+#define NO_VIDEO_HOLD_US 1000000 /* the last picture stays this long without a captured row, then NO VIDEO */
 #define MENU_TOP 2              /* 56 UI rows x 3 = 168 of 172 lines */
 #define MENU_ROW_LINES 3
 
@@ -285,12 +285,11 @@ static void grab_task(void *arg)
     (void)arg;
     grab_init();
     grab_set_abort(grab_abort);
-    int fails = 0;
     uint32_t epoch = s_control_epoch;
-    int64_t no_video_at = 0;
+    int64_t video_at = esp_timer_get_time(), no_video_at = 0;   /* last captured row, last NO VIDEO draw */
     for (;;) {
         if (grab_abort() || !transport_live()) {
-            fails = 0;
+            video_at = esp_timer_get_time();   /* the hold starts again after the menu or a restart */
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
@@ -326,12 +325,13 @@ static void grab_task(void *arg)
             s_row_age[y] = grab_row_done(y) ? 0u : s_row_age[y] < 255u ? (uint8_t)(s_row_age[y] + 1u) : 255u;
         if (rows > 0) {
             if (!info.error) ++s_stats.complete;
-            fails = 0;
+            video_at = esp_timer_get_time();
             refresh_stale_rows();
             if (rows >= GRAB_H / 2) follow_levels();
             s_picture = true;
             xTaskNotifyGive(s_flush_task);
-        } else if (++fails >= NO_VIDEO_GRABS && esp_timer_get_time() - no_video_at > 500000) {
+        } else if (esp_timer_get_time() - video_at > NO_VIDEO_HOLD_US && esp_timer_get_time() - no_video_at > 500000) {
+            /* Short dropouts keep the last picture on the panel. */
             no_video_at = esp_timer_get_time();   /* redrawn twice a second: the channel may change */
             draw_no_video();
             s_picture = true;

@@ -25,6 +25,7 @@
 
 #define BOOT_BUTTON      GPIO_NUM_28    /* XIAO ESP32-C5 BOOT */
 #define TICK_MS          50
+#define AFC_LOCKED_PERIOD_US 300000   /* LCD build: AFC window period while locked */
 #define LONG_TICKS       12             /* 0.6 s */
 #define MENU_IDLE_TICKS  600            /* 30 s without a press closes the menu */
 #define DAC_IDLE_TICKS   6000           /* 5 min on the bench-only DAC TEST page */
@@ -530,6 +531,20 @@ static void control_task(void *arg)
             diag_window(false, false, false);
             continue;
         }
+#ifdef C5VRX_LCD
+        /* LCD build: the AFC window costs ~17 ms of CPU per tick (afc2_measure,
+         * 80 % of the tick; board 2026-10-30) that the frame grabber needs.
+         * Locked, the AFC only watches for slow VTX drift (the lock is
+         * sticky), so it measures every AFC_LOCKED_PERIOD_US; unlocked or
+         * settling, every tick. 300 ms keeps the menu's VIDEO (a confirmed
+         * sync within 500 ms) steady. */
+        {
+            static int64_t measured_us;
+            const int64_t t = esp_timer_get_time();
+            if (s_afc_enabled && s_afc_locked && settle == 0 && t - measured_us < AFC_LOCKED_PERIOD_US) continue;
+            measured_us = t;
+        }
+#endif
         const bool copied = copy_control_window(s_window, CONTROL_BYTES);
         metrics_t m = {0};
         if (copied) {
@@ -554,8 +569,14 @@ static void control_task(void *arg)
         const bool afc_copied = receiver_ok && copy_afc_window(s_afc_window);
         bool window_ok = afc_copied && afc2_envelope_stationary(s_afc_window, AFC_WINDOW_BYTES);
         /* Picture measure (picture_sync.h): every live window, also those the
-         * AFC leaves out (a gain write, settle, fading): the goggles see those. */
+         * AFC leaves out (a gain write, settle, fading): the goggles see those.
+         * Not in the LCD build: it rates the DAC decoder's output, which no
+         * display shows there, at ~1.7 ms per window. */
+#ifdef C5VRX_LCD
+        if (false) {
+#else
         if (copied && !s_menu_active && (afc_copied || copy_afc_window(s_afc_window))) {
+#endif
             unsigned bits;
             const uint16_t *lut = transport_decoder_lut(&bits);
             if (lut) {
