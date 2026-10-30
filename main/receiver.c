@@ -771,6 +771,17 @@ void receiver_dc_reset_all(void)
 
 static uint32_t s_sat_one_sided, s_sat_two_sided, s_sat_score;
 
+/* Gain observer and sentinel period. LCD build: the software frame grabber
+ * (lcd.c) needs about half the CPU. At 200 us the observer, sentinel and
+ * timer took ~70 % of it and left the grabber 3 %; at 1 ms the observer
+ * alone still took 31 % (board, 2026-10-30). 2 ms keeps a gain decision
+ * every 2 ms; the gain core's holds and climbs are timed, not counted. */
+#ifdef C5VRX_LCD
+#define GAIN_TICK_US 2000
+#else
+#define GAIN_TICK_US 200
+#endif
+
 static void tick_cb(void *arg)
 {
     (void)arg;
@@ -833,7 +844,7 @@ static void observer_task(void *arg)
             vTaskDelay(1);
             before_wait = runnable_since = esp_timer_get_time();
         }
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(GAIN_TICK_US > 1000 ? GAIN_TICK_US / 1000 : 1));
         /* IRQ time can make an already-pending notification look like a
          * blocked wait. Only the explicit delay above resets our runnable
          * budget, so periodic sync IRQs cannot suppress the IDLE opportunity. */
@@ -955,7 +966,7 @@ void receiver_start(void)
         .name = "gain_tick", .skip_unhandled_events = true};
     esp_timer_handle_t timer;
     ESP_ERROR_CHECK(esp_timer_create(&args, &timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(timer, 200));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer, GAIN_TICK_US));
 }
 
 void receiver_print(void)

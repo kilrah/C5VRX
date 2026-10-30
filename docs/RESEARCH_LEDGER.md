@@ -655,6 +655,28 @@ with per-profile data in `research/data/phy_noise_lab_2026-10-28.json`.
 These bench controls do not establish a lower absolute NF and are not
 production boot settings. The current-level argument is not calibrated mA.
 
+## LCD output route: Waveshare ESP32-C5-LCD-1.47 (2026-10-30)
+
+A board build without a DAC ([LCD147.md](LCD147.md)). Source/tap: the
+unchanged MODEM_DIAG Q4/I4 ring at 40 MS/s (raw 32 KiB, nine descriptors).
+Processing: CPU, read-only: a phase-step FM discriminator with sync
+flywheels grabs 228 x 172 (4:3) grey pictures from two fields; a second task
+converts them (or the menu's logical-pixel UI rows) to RGB565 and sends
+4-row strips over SPI2 DMA to the ST7789. The TX BitScrambler/PARLIO path
+keeps running with no pins, so its verified restarts are unchanged; it no
+longer reaches a display. To give the grabber the CPU this build runs the
+gain observer every 2 ms instead of 200 us and the control task below the
+grabber (it runs in a 15 ms rest after every picture). This extends
+KonradIT's `tembed-link` UART video link (CPU grabber on the same ring,
+measured 24-25 PAL frames/s on a XIAO) and follows zerowidth's `p4usb`
+direction of a software decoder; it is not the C5VRX-1 CPU-paced route
+(the CPU never paces IQ here). Evidence: on one board, a live PAL picture
+from a bench VTX (B5, -38 dBm), 170 of 195 pictures complete in 13 s (12.9
+complete pictures/s), sync jitter 23 ns, AFC locked; a marker probe showing
+the RX descriptor register one node ahead of the data (docs/FINDINGS.md);
+host simulation of `grab.c` on synthetic FM PAL/NTSC. Not measured: NTSC,
+weak signal, the slower gain loop's fade behaviour, or any range.
+
 ## Removed sync flywheel (PR #212/#218 history, removed 2026-10-25)
 
 The C5VRX-5 flywheel (PR #212, witness fix PR #218, bounded sync-loss

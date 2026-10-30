@@ -58,6 +58,9 @@ static void status(void)
     profile_print();
     calibration_print();
     transport_print();
+#ifdef C5VRX_LCD
+    lcd_print();
+#endif
 }
 
 /* 8190 contiguous IQ bytes as hex lines (tools/capture_iq_snapshot.py). */
@@ -167,6 +170,9 @@ static void console_task(void *arg)
             case 'N': self_noise_request(); break;
             case '!': rx_clock_slip(1); printf("SLIP bench: one RX sampling-phase slip (T SPHASE shows the new excess)\n"); break;
             case 'Y': case 'W': case 'X': flightlog_console((char)c); break;
+#ifdef C5VRX_LCD
+            case 'V': lcd_dump(); break;
+#endif
             case 'h': case '?': help(); break;
             case 'o': case 'e': case 'v': case 'f': case 'n': case 'x': case 'c': case 'b': case 's': case 'g': case 'A': case 'U': case 'G': case 'Q': case 'Z': case 'm': {
                 int command = c;

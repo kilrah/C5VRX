@@ -2,7 +2,12 @@
  * A standalone PAL/NTSC raster (menu_raster.c) owns TX while the menu is
  * open; live video resumes with the exact boot topology on exit. The GDMA
  * scatter chain is allocated in 384-byte chunks only while the menu is open
- * (NTSC ~18 KiB, PAL ~22 KiB of internal SRAM). */
+ * (NTSC ~18 KiB, PAL ~22 KiB of internal SRAM).
+ *
+ * LCD build (C5VRX_LCD, lcd.c): no raster and no chain. The menu draws into
+ * one byte per logical pixel and the display task shows those rows while
+ * the menu is open; TX still stops on entry and the verified live restart
+ * runs on exit, so every menu-owned setting behaves as on the DAC build. */
 #include "receiver.h"
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +25,16 @@
 void transport_start_chain(dma_descriptor_t *first);
 void transport_stop_chain(void);
 
+#ifdef C5VRX_LCD
+static uint8_t s_ui[MENU_UI_LINES][MENU_UI_BYTES];
+#define UI_ROWS s_ui
+/* Odd while the rows are being redrawn (cleared, then drawn): the display
+ * task converts a strip again when a redraw overlapped it, instead of
+ * showing the half-drawn rows (flickering lines in the boot animation). */
+static volatile uint32_t s_ui_seq;
+#define UI_WRITE_BEGIN() do { __atomic_add_fetch(&s_ui_seq, 1u, __ATOMIC_SEQ_CST); } while (0)
+#define UI_WRITE_END() do { __atomic_add_fetch(&s_ui_seq, 1u, __ATOMIC_SEQ_CST); } while (0)
+#else
 /* 32 x 12 B = 384 B, word aligned. With live tasks running the internal
  * heap has >20 KiB free but in pieces: 64-byte-aligned 1.5-KiB and 768-B
  * chunks failed after ~14 KiB (board 2026-10-18, NO_MEM at 7-8 KiB free).
@@ -29,8 +44,12 @@ void transport_stop_chain(void);
 #define NODE_CHUNKS ((MENU_MAX_NODES + NODE_CHUNK - 1u) / NODE_CHUNK)
 
 static DMA_ATTR __attribute__((aligned(64))) menu_raster_t s_raster;
+#define UI_ROWS s_raster.ui
+#define UI_WRITE_BEGIN() do { } while (0)
+#define UI_WRITE_END() do { } while (0)
 static dma_descriptor_t *s_chunks[NODE_CHUNKS];
 static unsigned s_chunk_count, s_node_capacity, s_node_count;
+#endif
 volatile int s_menu_cursor;
 volatile int s_exp_sub = -1;
 bool s_exp_failed;
@@ -45,6 +64,26 @@ static dac_step_t s_dac_step = DAC_STEP_PATTERN;
 static bool s_raster_flat;
 static uint8_t s_flat_code;
 
+#ifdef C5VRX_LCD
+static void raster_restore(void) { s_raster_flat = false; }
+
+static void raster_flat(uint8_t code)
+{
+    UI_WRITE_BEGIN();
+    memset(s_ui, code, sizeof(s_ui));
+    UI_WRITE_END();
+    s_raster_flat = true;
+    s_flat_code = code;
+}
+
+/* The UI rows while the menu (or a status or boot screen) is open. */
+const uint8_t (*menu_lcd_rows(void))[MENU_UI_BYTES]
+{
+    return s_menu_active ? (const uint8_t (*)[MENU_UI_BYTES])s_ui : NULL;
+}
+
+uint32_t menu_lcd_seq(void) { return __atomic_load_n(&s_ui_seq, __ATOMIC_SEQ_CST); }
+#else
 static bool s_interlaced = true;
 
 /* Back from a flat meter level to the menu picture: sync, burst and blank
@@ -67,6 +106,7 @@ static void raster_flat(uint8_t code)
     s_flat_code = code;
     sync_dma_c2m(&s_raster, sizeof(s_raster));
 }
+#endif
 
 void menu_dac_step(void)
 {
@@ -93,8 +133,10 @@ static volatile int s_splash = -1;
 static void render_splash(void)
 {
     raster_restore();
-    menu_ui_render_splash_health(s_raster.ui, s_splash, calibration_dc_needed(NULL, 0) != 0);
-    sync_dma_c2m(s_raster.ui, sizeof(s_raster.ui));
+    UI_WRITE_BEGIN();
+    menu_ui_render_splash_health(UI_ROWS, s_splash, calibration_dc_needed(NULL, 0) != 0);
+    UI_WRITE_END();
+    sync_dma_c2m(UI_ROWS, sizeof(UI_ROWS));
 }
 
 bool menu_splash_active(void) { return s_splash >= 0; }
@@ -133,8 +175,10 @@ static void render_status(void)
         .title = s_status_title, .line1 = s_status_line1, .line2 = s_status_line2,
         .percent = s_status_percent, .channel = ch->name, .freq_mhz = ch->freq_mhz, .exp_active = experimental_mask() != 0,
     };
-    menu_ui_render_status(s_raster.ui, &v);
-    sync_dma_c2m(s_raster.ui, sizeof(s_raster.ui));
+    UI_WRITE_BEGIN();
+    menu_ui_render_status(UI_ROWS, &v);
+    UI_WRITE_END();
+    sync_dma_c2m(UI_ROWS, sizeof(UI_ROWS));
 }
 
 bool menu_status_active(void) { return s_status; }
@@ -214,9 +258,46 @@ void menu_render(void)
         .cn_x10 = receiver_obs_cn_x10(), .firmware = esp_app_get_description()->version,
     };
     experimental_snapshot(v.exp_values);
-    menu_ui_render(s_raster.ui, &v);
-    sync_dma_c2m(s_raster.ui, sizeof(s_raster.ui));
+    UI_WRITE_BEGIN();
+    menu_ui_render(UI_ROWS, &v);
+    UI_WRITE_END();
+    sync_dma_c2m(UI_ROWS, sizeof(UI_ROWS));
 }
+
+#ifdef C5VRX_LCD
+/* The display task follows s_menu_active; TX stops so that the settings the
+ * menu changes apply with the verified restart on exit, as on the DAC. */
+bool menu_open(void)
+{
+    if (s_menu_active) return true;
+    s_video_std = menu_standard();
+    s_raster_flat = false;
+    menu_render();
+    s_menu_active = true;
+    transport_stop_tx();
+    return true;
+}
+
+void menu_close(void)
+{
+    if (!s_menu_active) return;
+    transport_resume_live();
+    s_menu_active = false;
+    s_cal_sub = -1;
+    s_exp_sub = -1;
+    s_exp_failed = false;
+    s_dac_step = DAC_STEP_PATTERN;
+    ++s_control_epoch;
+}
+
+void menu_set_standard_mode(std_mode_t mode)
+{
+    s_std_mode = mode;
+    if (!s_menu_active) return;
+    s_video_std = menu_standard();
+    menu_render();
+}
+#else
 
 static dma_descriptor_t *node(unsigned index) { return &s_chunks[index / NODE_CHUNK][index % NODE_CHUNK]; }
 
@@ -351,4 +432,4 @@ void menu_set_standard_mode(std_mode_t mode)
     if (build_chain(want) != ESP_OK) ESP_ERROR_CHECK(build_chain(previous));
     transport_start_chain(node(0));
 }
-
+#endif

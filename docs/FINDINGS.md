@@ -7,6 +7,25 @@ scripts and data live in that branch under `v4/docs/PICTURE_CLIFF_STUDY.md`,
 Synthetic results are host simulations; board results are labelled as such.
 Measured range is not established.
 
+## RX descriptor register one node ahead (board, 2026-10-30)
+
+On the Waveshare ESP32-C5-LCD-1.47 build ([LCD147.md](LCD147.md)), bytes
+painted into the two RX descriptors after the one `in_dscr_bf0` names, and
+polled about every microsecond, showed in all six runs: the register names
+node N+1 within 3 us of the GDMA writing node N's first byte. The register
+is the descriptor already *fetched*, one ahead of the one being written.
+The LCD grabber now takes the node before the register's as the write
+position (`transport_rx_write_offset`); its black streaks, the earlier
+`tb_bad` timebase disagreements and most wide-search fallbacks went away.
+
+Not changed, needs a decision: `control_copy_plan()` (control windows,
+probe, sentinel, AFC copies) treats the register's node as active and
+copies the node before it as the newest completed one. By this
+measurement that node is the one still being written: such a window can
+end in samples from the previous ring lap (819 us older, 0.8 line out of
+phase). Measured on one board and one channel; whether it moves gain, DC
+or AFC results is not measured.
+
 ## U85Q on the board and a picture measure for the flight log (blackbox, 2026-10-28)
 
 **U85Q against P64**, same firmware, LEVEL, VTX at 25 mW, NTSC, deviation

@@ -106,6 +106,8 @@ bool copy_probe_window(uint8_t dst[PROBE_BYTES], int *node);
 bool copy_sentinel_window(uint8_t dst[64]);
 bool copy_snapshot(uint8_t *dst);
 bool copy_recent_endpoints(uint8_t *dst, size_t n);
+bool transport_rx_write_offset(uint32_t *offset);
+uint32_t transport_rx_max_descriptor(void);
 void rx_clock_slip(uint32_t us);
 
 /* ---- receiver.c (Direct Gain V5 owner) ---- */
@@ -273,6 +275,16 @@ void menu_dac_step(void);
 void status_screen(const char *title, const char *line1, const char *line2, int percent);
 void status_screen_end(void);
 bool menu_status_active(void);
+#ifdef C5VRX_LCD
+/* LCD build: the menu's UI rows (MENU_UI_LINES x MENU_UI_BYTES DAC codes,
+ * one per logical pixel) while it is open, else NULL. */
+const uint8_t (*menu_lcd_rows(void))[MENU_UI_BYTES];
+uint32_t menu_lcd_seq(void);   /* odd while those rows are being redrawn */
+/* ---- lcd.c ---- */
+void lcd_start(void);
+void lcd_print(void);
+void lcd_dump(void);   /* console V */
+#endif
 
 /* ---- profile.c ---- */
 #include "afc.h"

@@ -681,9 +681,19 @@ void control_start(void)
     s_commands = xQueueCreate(16, sizeof(int));
     ESP_ERROR_CHECK(s_commands ? ESP_OK : ESP_ERR_NO_MEM);
     /* IDF task stack depths are bytes. Reserve before driver allocations,
-     * then supply that same 6144-byte stack and TCB without another malloc. */
+     * then supply that same 6144-byte stack and TCB without another malloc.
+     * LCD build: below the frame grabber (lcd.c), which rests 15 ms after
+     * every picture. At priority 3 each 50 ms tick's ~10 ms of work stalled
+     * the grabber far beyond the 0.8 ms ring, on the same lines every time
+     * (50 ms = 2.5 PAL fields; board 2026-10-30: 158 of 177 grabs stalled
+     * >= 5 ms, up to 90 ms). It now runs between pictures. */
+#ifdef C5VRX_LCD
+    const UBaseType_t prio = 1;
+#else
+    const UBaseType_t prio = 3;
+#endif
     ESP_ERROR_CHECK(control_prepare() &&
-        xTaskCreateStatic(control_task,"control",CONTROL_STACK_BYTES,NULL,3,
+        xTaskCreateStatic(control_task,"control",CONTROL_STACK_BYTES,NULL,prio,
             s_control_memory->stack,&s_control_memory->task)!=NULL ? ESP_OK:ESP_ERR_NO_MEM);
 }
 

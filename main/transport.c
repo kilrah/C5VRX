@@ -56,7 +56,14 @@ static const void *tracker_program(void) { return demod_program(s_demod); }
  * plus 200R). Do not change the tested pin order. D10/GPIO10 and D3/GPIO7
  * are reserved for future seventh/eighth branches; keep them disconnected
  * here until a complete wider-DAC implementation is hardware-validated. */
+#ifdef C5VRX_LCD
+/* Waveshare ESP32-C5-LCD-1.47: no DAC. GPIO23/24 are the LCD's CS/DC and
+ * GPIO8 its RGB LED, so TX runs (the verified restarts stay identical) but
+ * drives no pin; lcd.c shows the picture. */
+static const int s_dac_gpio[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+#else
 static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
+#endif
 
 DMA_ATTR __attribute__((aligned(64))) uint8_t s_raw_ring[RAW_RING_BYTES];
 static parlio_rx_unit_handle_t s_rx;
@@ -712,6 +719,34 @@ int ring_node_index(uint32_t addr)
 }
 
 static uint32_t rx_active_addr(void) { return AHB_DMA.channel[s_rx_dma_ch].in.in_dscr_bf0.val; }
+
+/* Software readers of the whole ring (the LCD frame grabber, grab.c): the
+ * ring offset of the descriptor RX is writing now; every byte before it
+ * (cyclically) is complete. False while RX is stopped or restarting.
+ * in_dscr_bf0 runs one descriptor ahead of the data: it names node N+1 from
+ * the moment the GDMA starts writing node N (marker probe, Waveshare C5 LCD
+ * board 2026-10-30: the register switched within 3 us of node N's first
+ * byte landing, every time). Rows read up to that register showed the
+ * previous lap's samples, black sync streaks on the LCD. */
+bool transport_rx_write_offset(uint32_t *offset)
+{
+    if (s_rx_dma_ch < 0 || s_rx_node_count < 3) return false;
+    int k = ring_node_index(rx_active_addr());
+    if (k < 0) return false;
+    k = (k + s_rx_node_count - 1) % s_rx_node_count;
+    if (!s_rx_nodes[k].buffer) return false;
+    *offset = (uint32_t)(s_rx_nodes[k].buffer - s_raw_ring);
+    return true;
+}
+
+/* How far the GDMA may be ahead of that offset. */
+uint32_t transport_rx_max_descriptor(void)
+{
+    uint32_t m = 0;
+    for (int k = 0; k < s_rx_node_count; ++k)
+        if (s_rx_nodes[k].length > m) m = s_rx_nodes[k].length;
+    return m ? m : CONTROL_BYTES;
+}
 
 static bool completed_plan(int active, size_t need, control_copy_plan_t *out)
 {

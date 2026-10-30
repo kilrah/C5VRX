@@ -55,6 +55,12 @@ void app_main(void)
         printf("CONTROL stack reservation failed; USB status/download remain available\n");
         return;
     }
+#ifdef C5VRX_LCD
+    /* Waveshare LCD board: the panel and its tasks (lcd.c), after the
+     * control stack reservation; they wait for live transport. */
+    s_boot_stage = "lcd";
+    lcd_start();
+#endif
     s_boot_stage = "rf";
     ESP_ERROR_CHECK(rf_start());
     s_boot_radio_ms = (esp_timer_get_time() - app_t0) / 1000;

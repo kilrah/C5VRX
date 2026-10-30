@@ -18,9 +18,17 @@
 #define MENU_FONT_HEIGHT 8u
 #define MENU_UI_WIDTH 384u
 #define MENU_UI_LINES 56u
+#ifdef C5VRX_LCD
+/* The LCD build (lcd.c) keeps one byte per logical pixel: 21 KiB of UI
+ * rows instead of the 98 KiB CVBS raster, which it does not build. */
+#define MENU_UI_X_SCALE_NUM 1u
+#define MENU_UI_X_SCALE_DEN 1u
+#define MENU_UI_BYTES MENU_UI_WIDTH
+#else
 #define MENU_UI_X_SCALE_NUM 208u
 #define MENU_UI_X_SCALE_DEN 50u
 #define MENU_UI_BYTES 1600u
+#endif
 #define MENU_NTSC_UI_Y_REPEAT 4u
 #define MENU_PAL_UI_Y_REPEAT 5u
 /* First UI line as a field-line index of menu_raster_emit (NTSC index k is

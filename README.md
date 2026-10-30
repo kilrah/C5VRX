@@ -171,6 +171,15 @@ KiCad ERC/DRC and schematic/PCB parity checks are clean; REV C has not been buil
   Flash the full image when switching. Boot `heap_min` rose from ~2.1 KB to
   ~21.9 KB; PAL and long runs are pending
   ([measurements](docs/FINDINGS.md#psram-8-mb-on-the-xiao-now-mapped-board-2026-10-26)).
+- **Waveshare ESP32-C5-LCD-1.47** (no DAC; picture and menu on its 1.47"
+  LCD, software demodulation; live picture not yet board-checked):
+
+  ```sh
+  idf.py -B build-lcd147 -DSDKCONFIG=sdkconfig.lcd147 "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.lcd147.defaults" build
+  python tools/flash.py PORT --build build-lcd147
+  ```
+
+  Leave its microSD socket empty. See [docs/LCD147.md](docs/LCD147.md).
 
 ## First boot
 

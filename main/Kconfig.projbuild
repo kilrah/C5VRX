@@ -1,0 +1,36 @@
+menu "C5VRX board"
+
+    choice C5VRX_BOARD
+        prompt "Board and video output"
+        default C5VRX_BOARD_XIAO_DAC
+        help
+            Where the received video goes. The XIAO build recovers the
+            composite waveform onto the six-bit resistor DAC. The Waveshare
+            build has no DAC: it shows the picture and the menu on the
+            board's 1.47" ST7789 LCD (docs/LCD147.md).
+
+        config C5VRX_BOARD_XIAO_DAC
+            bool "XIAO ESP32-C5 with the resistor DAC (composite out)"
+
+        config C5VRX_BOARD_WAVESHARE_LCD147
+            bool "Waveshare ESP32-C5-LCD-1.47 (picture on the LCD)"
+    endchoice
+
+    config C5VRX_LCD_SPI_MHZ
+        int "LCD SPI clock (MHz)"
+        depends on C5VRX_BOARD_WAVESHARE_LCD147
+        range 10 80
+        default 40
+        help
+            40 MHz is Waveshare's example clock. The ST7789 is specified to
+            62.5 MHz writes; 80 MHz is outside the datasheet.
+
+    config C5VRX_LCD_FLIP
+        bool "Turn the LCD picture by 180 degrees"
+        depends on C5VRX_BOARD_WAVESHARE_LCD147
+        default n
+        help
+            Off: Waveshare's landscape orientation (their examples'
+            rotation 3).
+
+endmenu
