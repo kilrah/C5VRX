@@ -31,13 +31,27 @@ static uint8_t (*s_ui)[MENU_UI_BYTES];
 
 static unsigned sample(int x) { return (unsigned)x * MENU_UI_X_SCALE_NUM / MENU_UI_X_SCALE_DEN; }
 
+/* Rendering one row at a time (render_rows): only row s_row is drawn, into
+ * s_band. Clearing the whole image and drawing it again while the TX DMA
+ * scanned it sent rows out black: a band of black lines crawling up the
+ * picture at every refresh (P4 display, board 2026-10-31; the XIAO's
+ * composite output gets the same). */
+static int s_row = -1;                       /* -1: the whole image (s_ui) */
+static uint8_t s_band[MENU_UI_BYTES];
+static uint8_t *row_at(int y) { return s_row < 0 ? s_ui[y] : s_band; }
+
 static void rect(int x, int y, int w, int h, uint8_t code)
 {
     int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
     int x1 = x + w > W ? W : x + w, y1 = y + h > H ? H : y + h;
+    if (s_row >= 0) {
+        if (s_row < y0 || s_row >= y1) return;
+        y0 = s_row;
+        y1 = s_row + 1;
+    }
     if (x1 <= x0 || y1 <= y0) return;
     const unsigned s0 = sample(x0), s1 = sample(x1);
-    for (int yy = y0; yy < y1; ++yy) memset(&s_ui[yy][s0], code, s1 - s0);
+    for (int yy = y0; yy < y1; ++yy) memset(&row_at(yy)[s0], code, s1 - s0);
 }
 
 /* Rounded box: the outer rows are pulled in, which on this grid reads as
@@ -388,8 +402,11 @@ static void card_scan(const menu_view_t *v)
 static void card_dac(void)
 {
     const unsigned x0 = sample(CARD_X), x1 = sample(CARD_R);
-    for (unsigned y = 11; y < 21; ++y)
-        for (unsigned x = x0; x < x1; ++x) s_ui[y][x] = dac_check_ramp_code(x - x0, x1 - x0);
+    for (unsigned y = 11; y < 21; ++y) {
+        if (s_row >= 0 && (int)y != s_row) continue;
+        uint8_t *r = row_at((int)y);
+        for (unsigned x = x0; x < x1; ++x) r[x] = dac_check_ramp_code(x - x0, x1 - x0);
+    }
     const int pitch = CARD_W / DAC_CHECK_BITS, half = (pitch - 4) / 2;
     for (unsigned k = 0; k < DAC_CHECK_BITS; ++k) {
         const int x = CARD_X + (int)k * pitch;
@@ -415,11 +432,28 @@ static const char *hold_action(const menu_view_t *v)
     }
 }
 
-void menu_ui_render(menu_ui_rows_t ui, const menu_view_t *v)
+/* draw() once per row: each row is drawn complete into s_band and copied over
+ * the shown one, so the scan sees a row either old or new, never cleared.
+ * Text overflow counts once (the first row's pass counts every text). */
+static void render_rows(menu_ui_rows_t ui, void (*draw)(const void *), const void *view)
 {
     s_ui = ui;
     menu_ui_overflow = 0;
-    memset(ui, MENU_INK_BLACK, sizeof(menu_ui_rows_t));
+    unsigned overflow = 0;
+    for (int y = 0; y < H; ++y) {
+        s_row = y;
+        memset(s_band, MENU_INK_BLACK, sizeof(s_band));
+        draw(view);
+        if (y == 0) overflow = menu_ui_overflow;
+        memcpy(ui[y], s_band, sizeof(s_band));
+    }
+    s_row = -1;
+    menu_ui_overflow = overflow;
+}
+
+static void draw_menu(const void *view)
+{
+    const menu_view_t *v = view;
     if (v->exp_open) exp_list(v);
     else if (v->cal_sub >= 0) cal_list(v);
     else list(v);
@@ -448,14 +482,14 @@ void menu_ui_render(menu_ui_rows_t ui, const menu_view_t *v)
     }
 }
 
+void menu_ui_render(menu_ui_rows_t ui, const menu_view_t *v) { render_rows(ui, draw_menu, v); }
+
 /* Full-screen status (calibration and the like): the title in the display
  * font when it fits, two lines and a progress bar. */
-void menu_ui_render_status(menu_ui_rows_t ui, const menu_status_view_t *v)
+static void draw_status(const void *view)
 {
+    const menu_status_view_t *v = view;
     char buf[24];
-    s_ui = ui;
-    menu_ui_overflow = 0;
-    memset(ui, MENU_INK_BLACK, sizeof(menu_ui_rows_t));
     const int x = 12, w = W - 24;
     text(v->exp_active ? "C5VRX EXP" : "C5VRX", x, 1, MENU_INK_WHITE);
     snprintf(buf, sizeof(buf), "%s  %u", v->channel ? v->channel : "", v->freq_mhz);
@@ -478,16 +512,20 @@ void menu_ui_render_status(menu_ui_rows_t ui, const menu_status_view_t *v)
     }
 }
 
+void menu_ui_render_status(menu_ui_rows_t ui, const menu_status_view_t *v) { render_rows(ui, draw_status, v); }
+
 void menu_ui_render_splash(menu_ui_rows_t ui, int percent)
 {
     menu_ui_render_splash_health(ui, percent, false);
 }
 
-void menu_ui_render_splash_health(menu_ui_rows_t ui, int percent, bool needs_calibration)
+typedef struct { int percent; bool needs_calibration; } splash_view_t;
+
+static void draw_splash(const void *view)
 {
-    s_ui = ui;
-    menu_ui_overflow = 0;
-    memset(ui, MENU_INK_BLACK, sizeof(menu_ui_rows_t));
+    const splash_view_t *v = view;
+    const int percent = v->percent;
+    const bool needs_calibration = v->needs_calibration;
     const int x0 = (W - (int)MENU_LOGO_WIDTH) / 2, y0 = (H - (int)MENU_LOGO_ROWS) / 2 - 3;
     for (int y = 0; y < (int)MENU_LOGO_ROWS; ++y)
         for (int x = 0; x < (int)MENU_LOGO_WIDTH; ++x)
@@ -496,4 +534,10 @@ void menu_ui_render_splash_health(menu_ui_rows_t ui, int percent, bool needs_cal
     meter((W - bw) / 2, y0 + (int)MENU_LOGO_ROWS + 8, bw, percent);
     if (needs_calibration)
         text_box("CALIBRATION RECOMMENDED", 12, H - 7, W - 24, ALIGN_CENTER, FONT_TEXT, MENU_INK_WHITE);
+}
+
+void menu_ui_render_splash_health(menu_ui_rows_t ui, int percent, bool needs_calibration)
+{
+    const splash_view_t v = {percent, needs_calibration};
+    render_rows(ui, draw_splash, &v);
 }

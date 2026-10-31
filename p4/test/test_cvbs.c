@@ -14,6 +14,9 @@ axi_dma_dev_t AXI_DMA;
 
 enum { HN, HEQ, HBR, HBL, HVID };   /* half-line kinds: none(blank), eq, broad, blank no pulse, video */
 static bool g_pal;
+static bool g_colour;        /* colour bars instead of the grey gradient */
+/* Colour bars: four 13 us segments: grey, +V (red), +U (blue), -U-V (green). */
+static const double g_bar_u[4] = {0, 0, 0.2, -0.15}, g_bar_v[4] = {0, 0.2, 0, -0.15};
 static double g_H;           /* line, samples */
 static int g_lines;
 /* kinds of the two halves of line ln (1-based) */
@@ -78,7 +81,7 @@ static uint8_t level(int64_t n, double noise_amp, unsigned *rng)
     const int half = pos >= Hus / 2;
     const int k = half ? b : a;
     const double hp = half ? pos - Hus / 2 : pos;
-    double v = 20;
+    double v = 20, chroma_u = 0, chroma_v = 0;
     switch (k) {
     case HEQ: v = hp < 2.35 ? 0 : 20; break;
     case HBR: v = hp < Hus / 2 - 4.7 ? 0 : 20; break;
@@ -89,23 +92,41 @@ static uint8_t level(int64_t n, double noise_amp, unsigned *rng)
         const double act0 = g_pal ? 10.5 : 9.4, act1 = act0 + (g_pal ? 52.0 : 52.6);
         if (pos < act0 || pos >= act1) { v = 20; break; }
         const int r = frame_row(li + 1);
-        if (pos < act0 + 5.0) v = 63;                                  /* white marker, 5 us */
+        if (g_colour) {
+            const int seg = (int)((pos - act0) / 13.0);
+            const double white = 20.0 * (g_pal ? 2.333 : 2.5);
+            v = 20 + 0.4 * white;
+            chroma_u = g_bar_u[seg > 3 ? 3 : seg] * white;
+            chroma_v = g_bar_v[seg > 3 ? 3 : seg] * white;
+        } else if (pos < act0 + 5.0) v = 63;                           /* white marker, 5 us */
         else v = 20 + 43.0 * (r < 0 ? 0 : r) / (rows_total() - 1);    /* row gradient */
         break;
     }
+    }
+    if (g_colour && !half && (k == HVID || k == HN) && hp > (g_pal ? 5.6 : 5.3) && hp < (g_pal ? 7.85 : 7.8)) {
+        /* burst: half the sync depth; PAL (-U +- V)/sqrt2, NTSC -U */
+        if (g_pal) { chroma_u = -10.0 / sqrt(2.0); chroma_v = 10.0 / sqrt(2.0); }
+        else { chroma_u = -10.0; chroma_v = 0; }
+    }
+    if (chroma_u != 0 || chroma_v != 0) {
+        const double w = 2 * M_PI * (g_pal ? 4.43361875 : 3.57954545) * us;   /* continuous carrier */
+        const int vsw = g_pal && (li & 1) ? -1 : 1;                           /* PAL V switch */
+        v += chroma_u * sin(w) + vsw * chroma_v * cos(w);
     }
     if (noise_amp > 0) { *rng = *rng * 1103515245u + 12345u; v += noise_amp * (((*rng >> 16) & 0x7fff) / 16384.0 - 1.0); }
     int c = (int)lrint(v);
     return (uint8_t)(c < 0 ? 0 : c > 63 ? 63 : c);
 }
 
-static int run(bool pal, double noise, double clock_ppm)
+static int run(bool pal, double noise, double clock_ppm, bool colour)
 {
+    g_colour = colour;
+    memset(&s_cl, 0, sizeof(s_cl));
     memset(s_hist, 0, sizeof(s_hist));
-    s_hw = 0; s_search = 0; s_locked = false; s_line_in_field = 1000; s_parity = 0; s_seq = 0;
+    s_hw = 0; s_search = 0; s_locked = false; s_line_in_field = 0; s_parity = 0; s_vs_missed = VS_REACQUIRE; s_seq = 0;
     s_period = pal ? PERIOD_PAL : PERIOD_NTSC; s_frame_pal = true; s_ready_idx = -1; s_held_idx = -1; s_w_idx = 0;
     memset(&s_cnt, 0, sizeof(s_cnt));
-    for (int k = 0; k < 3; ++k) memset(s_frames[k], 0, CVBS_W * 2 * CVBS_H_MAX);
+    for (int k = 0; k < 3; ++k) memset(s_frames[k], 0, CVBS_ROW_BYTES * CVBS_H_MAX);
     g_pal = pal; g_lines = pal ? 625 : 525;
     g_H = (pal ? 1280.0 : 1271.1111) * (1.0 + clock_ppm * 1e-6);
     unsigned rng = 1;
@@ -116,8 +137,10 @@ static int run(bool pal, double noise, double clock_ppm)
         int64_t room = HIST - (s_hw - need) - 32;
         if (room > 4096) room = 4096;
         for (int64_t i = 0; i < room; ++i, n += 2) {
-            const int a = level(n, noise, &rng);
-            s_hist[(s_hw++) & HM] = (uint8_t)(a + level(n + 1, noise, &rng));
+            const int a = level(n, noise, &rng), b = level(n + 1, noise, &rng);
+            s_raw[(2 * s_hw) & RM] = (uint8_t)a;
+            s_raw[(2 * s_hw + 1) & RM] = (uint8_t)b;
+            s_hist[(s_hw++) & HM] = (uint8_t)(a + b);
         }
         decode_lines();
     }
@@ -125,42 +148,74 @@ static int run(bool pal, double noise, double clock_ppm)
     if (!cvbs_acquire(&f)) { printf("%s: no frame (fields=%u lines=%u hsync=%u locked=%d)\n", pal ? "PAL" : "NTSC", s_cnt.fields, s_cnt.lines, s_cnt.hsync, s_locked); return 1; }
     int bad = 0, worst = 0;
     const double gain = 255.0 / (s_blank + (s_blank - s_sync) * (pal ? 2.333 : 2.5) - s_blank);
-#define GREY(px) ((((px) >> 5) & 63) * 255 / 63)   /* RGB565 green, 6 bits */
+#define YPX(r, x) (f.yuv[(size_t)(r) * CVBS_ROW_BYTES + 3 * ((x) / 2) + ((x) & 1 ? YUV_Y1 : YUV_Y0)])
+#define CPX(r, x) (f.yuv[(size_t)(r) * CVBS_ROW_BYTES + 3 * ((x) / 2) + YUV_C])
+    if (colour) {
+        /* Bars: Cb (even rows) / Cr (odd rows) at each segment's centre,
+         * averaged over 40 rows in the middle of the picture. */
+        const double ku = 291.9, kv = 207.4;
+        static const int px_pal[4] = {61, 191, 321, 451}, px_ntsc[4] = {58, 188, 318, 448};
+        for (int seg = 0; seg < 4; ++seg) {
+            const int x = pal ? px_pal[seg] : px_ntsc[seg];
+            double cb = 0, cr = 0;
+            for (int r = 200; r < 240; r += 2) { cb += CPX(r, x); cr += CPX(r + 1, x); }
+            cb /= 20; cr /= 20;
+            const double wcb = 128 + ku * g_bar_u[seg], wcr = 128 + kv * g_bar_v[seg];
+            const int ok = fabs(cb - wcb) < 18 && fabs(cr - wcr) < 18;
+            printf("  %s bar %d: Cb %.0f (want %.0f) Cr %.0f (want %.0f) %s\n", pal ? "PAL" : "NTSC", seg, cb, wcb, cr,
+                   wcr, ok ? "ok" : "BAD");
+            bad += !ok;
+        }
+        printf("%s colour noise=%.1f: colour_lines=%u killed=%u vote=%d %s\n", pal ? "PAL " : "NTSC", noise,
+               s_cl.colour_lines, s_cl.killed_lines, s_cl.vote, bad ? "FAIL" : "ok");
+        return bad != 0;
+    }
     /* PAL's last row is half-line 623, which this generator leaves blank. */
     for (int r = 0; r < f.height - (pal ? 1 : 0); ++r) {
         if (20 + 43.0 * r / (f.height - 1) + noise > 63) break;   /* clipped by the noise: mean is low */
         const int want = (int)lrint(43.0 * r / (f.height - 1) * gain);
         int sum = 0;
-        for (int x = CVBS_W / 4; x < CVBS_W * 7 / 8; ++x) sum += GREY(f.rgb[(size_t)r * CVBS_W + x]);
+        for (int x = CVBS_W / 4; x < CVBS_W * 7 / 8; ++x) sum += YPX(r, x);
         const int cnt = CVBS_W * 7 / 8 - CVBS_W / 4, got = (sum + cnt / 2) / cnt;
         const int d = abs(got - (want > 255 ? 255 : want));
         if (d > worst) worst = d;
-        if (d > 6 + (int)noise) {   /* RGB565 green: 6 bits, steps of ~4 */ if (bad < 5) printf("  row %d: got %d want %d\n", r, got, want); ++bad; }
+        if (d > 5 + (int)noise) {   /* fixed-point levels (luma.S): ~1 % gain, truncating shift */ if (bad < 5) printf("  row %d: got %d want %d\n", r, got, want); ++bad; }
     }
     /* marker: 5 us white = 50 samples at 10 MS/s, less the 0.4/0.7 us trim */
     int mark = 0;
-    for (int x = 0; x < 120; ++x) mark += GREY(f.rgb[(size_t)300 * CVBS_W + x]) > 200;
+    for (int x = 0; x < 120; ++x) mark += YPX(300, x) > 200;
     printf("%s noise=%.1f ppm=%.0f: pal=%d height=%d frames=%u fields=%u hsync/lines=%u/%u sync=%.2f blank=%.2f "
            "line_us=%.4f bad_rows=%d worst=%d marker_px=%d\n",
            pal ? "PAL " : "NTSC", noise, clock_ppm, f.pal, f.height, s_cnt.frames, s_cnt.fields, s_cnt.hsync, s_cnt.lines,
            s_sync, s_blank, (double)s_period / Q16 / 10.0, bad, worst, mark);
-    return bad > 0 || f.pal != pal || mark < (pal ? 42 : 39) || mark > (pal ? 50 : 47);
+    return bad > 0 || f.pal != pal || mark < (pal ? 42 : 39) || mark > (pal ? 50 : 47) + (int)noise / 2;
 }
 
 int main(void)
 {
-    for (int k = 0; k < 3; ++k) s_frames[k] = calloc(1, CVBS_W * 2 * CVBS_H_MAX);
+    for (int k = 0; k < 3; ++k) s_frames[k] = calloc(1, CVBS_ROW_BYTES * CVBS_H_MAX);
     set_slice();
     build_lut();
+    chroma_init();
+    s_saturation = 100;   /* the bars' expected values are at nominal saturation */
     int fail = 0;
-    fail |= run(true, 0, 0);
-    fail |= run(false, 0, 0);
-    fail |= run(true, 0, 300);
-    fail |= run(false, 0, -300);
-    fail |= run(true, 6, 0);
-    fail |= run(false, 6, 0);
-    fail |= run(true, 12, 0);
-    fail |= run(false, 12, 100);
+    fail |= run(true, 0, 0, false);
+    fail |= run(false, 0, 0, false);
+    fail |= run(true, 0, 300, false);
+    fail |= run(false, 0, -300, false);
+    fail |= run(true, 6, 0, false);
+    fail |= run(false, 6, 0, false);
+    fail |= run(true, 12, 0, false);
+    fail |= run(false, 12, 100, false);
+    fail |= run(true, 0, 0, true);
+    fail |= run(false, 0, 0, true);
+    fail |= run(true, 4, 50, true);
+    fail |= run(false, 4, -50, true);
+    /* Levels learnt on a bad signal, far above this one's: it must still lock. */
+    s_sync = 25.0f; s_blank = 31.0f; set_slice(); build_lut();
+    fail |= run(true, 0, 0, false);
+    s_sync = 25.0f; s_blank = 31.0f; set_slice(); build_lut();
+    fail |= run(false, 6, 0, false);
     printf(fail ? "FAIL\n" : "PASS\n");
     return fail;
 }

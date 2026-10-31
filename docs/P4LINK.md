@@ -11,13 +11,14 @@ settings and status column on the right 224 px, and streams the same
 picture as a USB webcam (UVC, MJPEG 800 x 600) on its high-speed USB port.
 
 Status (2026-10-31, bench, one FireBeetle + one JC1060P470C, PAL VTX on
-B5): the UART link, status column and touch controls work; the P4 captures
-the code bus and its decoder locks at the full PAL rate (15,625 lines/s,
-50 fields/s, 25 pictures/s shown, no overruns, decode task ~64 % of core 1).
-Picture quality, NTSC, UVC and range are not checked yet. The P4 decoder
-also passes a host test on synthetic PAL and NTSC (`p4/test/test_cvbs.c`:
-lock, standard, field parity and row order, levels, horizontal position,
-+-300 ppm clock, noise up to +-12 codes). See [Open items](#open-items).
+B5): the UART link, status column and touch controls work; the P4 shows a
+stable PAL colour picture at the full rate (15,625 lines/s, 50 fields/s,
+25 pictures/s shown, no overruns; decode task ~75 % of core 1), and the
+C5's own menu (progressive) at 50 fields/s. NTSC, UVC at full rate and
+range are not checked yet. The P4 decoder also passes a host test on
+synthetic PAL and NTSC (`p4/test/test_cvbs.c`: lock, standard, field parity
+and row order, levels, horizontal position, colour bars, +-300 ppm clock,
+noise). See [Open items](#open-items).
 
 ## Why this split
 
@@ -50,23 +51,29 @@ C5:  MODEM_DIAG Q4/I4 40 MS/s -> PARLIO RX -> raw 32 KiB ring              (unch
        -> TX BitScrambler U80P64-R1 / U85Q (two lookups, unique CVBS20 as [D,D])
        -> PARLIO TX 40 MHz: codes on GPIO2..7, clock out on GPIO8         (clock pin added)
      p4link.c: UART1 115200, status every 250 ms, commands -> s_commands
-P4:  PARLIO RX, external 40 MHz clock, 8-bit, 32 x 4032 B ring (3.2 ms, internal RAM)
-       -> core 0 fill task: bytes 0+2 of each 32-bit word summed -> 32 Ki-sample history (10 MS/s)
-       -> core 1 decode task: sync slicer, line PLL, broad pulses / field parity, active line
-          at source resolution (512 samples, sub-sample phase) through the level table
-          -> woven RGB565 frames (PSRAM, 3 buffers, written back once per frame)
-       -> PPA: 512 -> 800 columns (25/16), 480 -> 600 / 565 -> 600 rows (20/16, 17/16) into
-          one of two DPI frame buffers (and the UVC frame); core 0 adds overlays and the column
-          swapped on the panel's refresh; settings column; same rows to the UVC frame
-       -> UVC task: hardware JPEG (grey, q80) of the newest frame, 30 fps paced
+P4:  PARLIO RX, external 40 MHz clock, 8-bit, 24 x 4032 B ring (2.4 ms, internal RAM)
+       -> core 0 fill task (PIE, fill.S): even bytes = 20 MS/s codes (raw history),
+          pair sums = 10 MS/s samples (history)
+       -> core 1 decode task: sync slicer, line PLL, broad pulses / field parity on the
+          10 MS/s samples; per line chroma from the burst (PIE correlations, corr.S) and
+          Y (PIE, luma.S) at source resolution (512 pixels) -> YUV420 rows
+       -> core 0 copier task: rows into woven YUV420 frames (PSRAM, 3 buffers),
+          written back in 32-row blocks
+       -> PPA: YUV420 -> RGB565, 512 -> 800 columns (25/16), 480 -> 600 / 564 -> 600 rows
+          (20/16, 17/16; a progressive field 240/282 rows, 40/16, 34/16) into one of two DPI
+          frame buffers swapped on the panel's refresh (and the UVC frame); core 0 adds
+          overlays and the settings column
+       -> UVC task: hardware JPEG (q80) of the newest frame, 30 fps paced
 ```
 
 - Source/tap: the C5's TX output (the DAC codes), not IQ. Acquired rate
-  40 MHz bus, 20 MS/s unique codes. Ring: 129 KiB of whole 4032-byte DMA
-  nodes, partial receive, EOF every eight nodes.
-- Ownership: the C5 CPU never touches the codes; P4 core 0 copies the ring
-  into the history (one 32-bit store per four ring words), core 1 decodes, core 0
-  renders and serves USB. The P4 never paces the C5.
+  40 MHz bus, 20 MS/s unique codes. Ring: 94.5 KiB of whole 4032-byte DMA
+  nodes, partial receive, EOF every eight nodes. It is allocated first at
+  boot: it needs one block of internal DMA memory (32 nodes no longer fitted
+  next to the colour histories: `capture=ESP_ERR_NO_MEM`).
+- Ownership: the C5 CPU never touches the codes. P4 core 0 fills the
+  histories, copies rows to PSRAM and renders; core 1 decodes. The P4 never
+  paces the C5.
 - Boundaries: a C5 verified restart (OUTPUT, DEMOD, profile) or its menu
   stops TX and the clock; the P4 ring then stalls, the picture holds and
   `NO VIDEO DATA` shows until the clock returns. A DMA lap (decoder late by
@@ -87,28 +94,47 @@ Six-bit codes, 0 = sync tip, about 20 = blanking (`DAC_IDLE_CODE`):
   run starting mid-line marks the half-line field. PAL: the whole-line field
   is the top one; NTSC: the half-line field. A frame is published after its
   second field (or every field if the parity does not alternate). Menu
-  FIELDS swaps the two.
+  FIELDS swaps the two. Fields that keep one parity (the C5's menu raster,
+  progressive in this build) go into the frame as their own rows and the
+  PPA scales them twice as much; doubling their lines on the CPU doubled the
+  rows to copy and the decoder fell behind.
 - Standard from the line period (64 vs 63.56 us): PAL 576 rows from line
   23/336, NTSC 480 rows from line 21/283.
 - Levels: black at blanking, white at blanking + 2.33 (PAL) / 2.5 (NTSC)
-  times the sync depth; CONTRAST and BRIGHTNESS on top.
-- 10 MS/s: each history sample is the sum of two successive 20 MS/s codes,
-  a free low-pass (about 5 MHz of luma). At 20 MS/s the decoder took all of
-  a core for half the data on the board (2026-10-31: a P4 load costs ~3-5
-  cycles, as p4usb found); now the decode task uses about 64 % of core 1 at
-  full PAL rate (15,625 lines/s, 50 fields/s, no overruns). Scaling on the
-  CPU managed 11 pictures/s (77-98 ms each); the PPA does it in ~17 ms, so
-  the panel shows all 25 pictures/s.
-- Monochrome. The codes carry the colour subcarrier; decoding it is a
-  possible next step (the pair sum damps it only a little: -2.3 dB at
-  4.43 MHz, -1.5 dB at 3.58 MHz).
+  times the sync depth; CONTRAST and BRIGHTNESS on top, as fixed-point
+  weights for the PIE routine. Each line starts at its nearest sample
+  (+-25 ns); `[1 2 1]` on colour lines damps the subcarrier (-30 dB at
+  4.43 MHz, -15 dB at 3.58 MHz).
+- 10 MS/s for sync and luma: each history sample is the sum of two
+  successive 20 MS/s codes, a free low-pass (about 5 MHz of luma).
+- Colour (PAL and NTSC), on the 20 MS/s codes (at 10 MS/s the demodulated
+  chroma's 2 fsc image would alias to about 1 MHz): per line the burst and 64
+  windows across the active line (one per 8 pixels), each correlated with
+  zero-mean sin/cos tables over two subcarrier cycles, so luma and the 2 fsc
+  term cancel. The line's own burst gives the carrier phase; PAL's V switch
+  comes from the burst's +-45 degree swing between successive lines (a vote
+  keeps the alternation), then the PAL delay line (two lines' mean) cancels
+  phase errors. The burst amplitude sets the colour gain; a line without a
+  usable burst stays grey. YUV420 keeps Cb on even rows and Cr on odd ones,
+  so the two fields of a frame carry one each. SATURATION defaults to 30 %:
+  the FPV link's chroma is noisy, and at 100 % (nominal) the noise showed
+  (operator, 2026-10-31).
+- CPU: a P4 load costs several cycles (p4usb found ~3-5), so scalar
+  per-pixel loops ran 10-20 times slower than their instruction counts
+  (the luma row ~23 cycles a pixel, a chroma multiply-accumulate ~17). The
+  hot loops use the P4's PIE vector unit, 16 bytes an instruction: the
+  fill (55 -> 30 % of core 0), the chroma correlations and the luma row.
+  Rows go to PSRAM through a copier task on core 0, since a 768-byte copy
+  into busy PSRAM stalled the decoder 3.3-5k cycles (esp_async_memcpy cost
+  39k cycles a call). Scaling on the CPU managed 11 pictures/s; the PPA does
+  it in ~17 ms, so the panel shows all 25.
 
 PSRAM bandwidth (board, 2026-10-31): the panel scans its frame buffer out
 of PSRAM 61 times a second. With the PPA running, writing the decoder's
 whole 590 KB frame back from the cache in one burst at the end of each frame
 starved the scanout now and then: a panel frame took 31.7 ms instead of
 16.4 and showed white (about 6 a minute; 0 in 90 s without that burst).
-The decoder now writes back 32-row blocks as it finishes them (0 late
+The frame now goes back in 32-row blocks as fields finish them (0 late
 frames in 2 minutes). Not the cause: the 1.2 MB cache invalidates (19 us
 each). No help: rate-limiting the PPA's DMA2D, 32-byte PPA bursts (worse).
 The console's `PANEL late_frames=` line counts frames that ended more than
@@ -231,9 +257,10 @@ While the C5 menu is open the rows become NEXT (`n`), SELECT (`x`) and EXIT
 (`e`), so every C5VRX-5 menu item stays reachable.
 
 MORE > (display page, kept in the P4's NVS unless noted): BACKLIGHT,
-CONTRAST, BRIGHTNESS, FIELD ORDER (swap), CAL QUICK / CAL FULL (`F` /
-`B` on the C5), CLK RISE/FALL (the P4's sampling edge; restarts the
-capture) and the C5's decoder (`m`, P64/U85Q), OUTPUT (`g`), BACK.
+CONTRAST, BRIGHTNESS, SATURATION (0 = B/W, default 30 %), CAL QUICK / CAL
+FULL (`F` / `B` on the C5), CLK RISE/FALL (the P4's sampling edge; restarts
+the capture) and FIELDS (swap the field order), the C5's decoder (`m`,
+P64/U85Q) and BACK. OUTPUT stays in the C5's own menu.
 
 ## Link protocol
 
@@ -272,8 +299,9 @@ Not done: colour decoding, a raw-IQ mode, CI for the `p4/` project.
 - zerowidth's `p4usb` fork (https://github.com/zerowidth/C5VRX, branch
   `p4usb`, commit 3dfac08): the continuous PARLIO RX receive on the P4 with
   the descriptor-register DMA position (`p4usb/main/decode.c`), adapted in
-  `p4/main/cvbs.c`; its decoder's 4-sample sync sums; the P4 USB/UVC and
-  revision settings as a reference. Its architecture (raw IQ to the P4) is
+  `p4/main/cvbs.c`; its decoder's 4-sample sync sums; its PIE kernels
+  (`chroma.S`, `luma.S`) as the model for `corr.S` and `luma.S`; the P4
+  USB/UVC and revision settings as a reference. Its architecture (raw IQ to the P4) is
   the alternative discussed above.
 - Panel init sequence, DSI timing, MIPI LDO and backlight: Guition's
   JC1060P470C `video_lcd_display` example (Espressif example code,

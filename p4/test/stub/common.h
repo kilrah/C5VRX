@@ -40,6 +40,7 @@ static inline esp_err_t esp_cache_get_alignment(uint32_t c,size_t*o){(void)c;*o=
 static inline void *heap_caps_aligned_calloc(size_t a,size_t n,size_t s,uint32_t c){(void)a;(void)c;return calloc(n,s);}
 static inline void esp_rom_install_channel_putc(int c, void (*f)(char)){(void)c;(void)f;}
 static inline void esp_rom_install_uart_printf(void){}
+static inline uint32_t esp_cpu_get_cycle_count(void){return 0;}
 typedef struct { struct { uint32_t length; } dw0; void *buffer; void *next; } dma_descriptor_align8_t;
 typedef struct { struct { struct { struct { uint32_t peri_in_sel_chn; } in_peri_sel; struct { uint32_t val; } in_dscr_bf0; } conf; } in[3]; } axi_dma_dev_t;
 extern axi_dma_dev_t AXI_DMA;

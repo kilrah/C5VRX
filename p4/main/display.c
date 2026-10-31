@@ -221,21 +221,27 @@ uint32_t display_late_frames(uint32_t *max_us)
     return s_late_frames;
 }
 
-/* The PPA scales a frame (512 x 576/480 RGB565) by exact 1/16 steps:
- * 25/16 across (800 columns), NTSC 20/16 down (600 rows), PAL 17/16 down
- * from the middle 565 lines (600 rows; 5-6 lines of overscan go). */
+/* The PPA converts a frame (512 x 576/480 YUV420, BT.601 full range) to
+ * RGB565 and scales it by exact 1/16 steps: 25/16 across (800 columns),
+ * NTSC 20/16 down (600 rows), PAL 17/16 down from the middle 564 lines (599
+ * rows; YUV420 needs even blocks, 6 lines of overscan go). */
 static esp_err_t scale_frame(const cvbs_frame_t *f, void *out, uint32_t out_w, uint32_t out_h, size_t out_size)
 {
-    const bool pal = f->height == 576;
+    /* 576 PAL, 480 NTSC; a progressive field 288 / 240: 34/16 from the
+     * middle 282 rows, 40/16 (600 rows). */
+    const int h = f->height;
+    const uint32_t bh = h == 576 ? 564 : h == 288 ? 282 : (uint32_t)h, by = h == 576 ? 6 : h == 288 ? 2 : 0;
+    const float sy = h == 576 ? 17.0f / 16.0f : h == 480 ? 20.0f / 16.0f : h == 288 ? 34.0f / 16.0f : 40.0f / 16.0f;
     const ppa_srm_oper_config_t c = {
-        .in = {.buffer = f->rgb, .pic_w = CVBS_W, .pic_h = (uint32_t)f->height, .block_w = CVBS_W,
-               .block_h = pal ? 565 : 480, .block_offset_x = 0, .block_offset_y = pal ? 5 : 0,
-               .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
+        .in = {.buffer = f->yuv, .pic_w = CVBS_W, .pic_h = (uint32_t)h, .block_w = CVBS_W,
+               .block_h = bh, .block_offset_x = 0, .block_offset_y = by,
+               .srm_cm = PPA_SRM_COLOR_MODE_YUV420, .yuv_range = PPA_COLOR_RANGE_FULL,
+               .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601},
         .out = {.buffer = out, .buffer_size = out_size, .pic_w = out_w, .pic_h = out_h,
                 .block_offset_x = 0, .block_offset_y = 0, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
         .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
         .scale_x = 25.0f / 16.0f,
-        .scale_y = pal ? 17.0f / 16.0f : 20.0f / 16.0f,
+        .scale_y = sy,
         .mode = PPA_TRANS_MODE_BLOCKING,
     };
     return ppa_do_scale_rotate_mirror(s_ppa, &c);

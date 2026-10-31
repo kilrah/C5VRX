@@ -50,11 +50,12 @@ static const char *TAG = "ui";
 
 /* ---------------- display settings (P4 NVS) ---------------- */
 
-enum { S_BACKLIGHT, S_CONTRAST, S_BRIGHT, S_SWAP, S_EDGE, S_COUNT };
+enum { S_BACKLIGHT, S_CONTRAST, S_BRIGHT, S_SAT, S_SWAP, S_EDGE, S_COUNT };
 static struct { const char *key; int value, min, max, step; } s_set[S_COUNT] = {
     [S_BACKLIGHT] = {"backlight", 100, 10, 100, 10},
     [S_CONTRAST]  = {"contrast", 100, 50, 200, 10},
     [S_BRIGHT]    = {"bright", 0, -64, 64, 8},
+    [S_SAT]       = {"sat", 30, 0, 200, 10},     /* 30 %: the FPV link's chroma is noisy (board 2026-10-31) */
     [S_SWAP]      = {"swap", 0, 0, 1, 1},
     [S_EDGE]      = {"edge", 0, 0, 1, 1},
 };
@@ -65,6 +66,7 @@ static void apply(int id)
     switch (id) {
     case S_BACKLIGHT: display_set_backlight(s_set[S_BACKLIGHT].value); break;
     case S_CONTRAST: case S_BRIGHT: cvbs_set_picture(s_set[S_CONTRAST].value, s_set[S_BRIGHT].value); break;
+    case S_SAT: cvbs_set_saturation(s_set[S_SAT].value); break;
     case S_SWAP: cvbs_set_field_swap(s_set[S_SWAP].value); break;
     case S_EDGE: cvbs_set_sample_edge_neg(s_set[S_EDGE].value); break;
     default: break;
@@ -231,14 +233,16 @@ static void rows_for(const c5_status_t *st, row_t r[ROWS])
         r[2] = (row_t){.kind = ROW_STEP};
         strcpy(r[2].label, "BRIGHTNESS");
         snprintf(r[2].value, sizeof(r[2].value), "%+d", s_set[S_BRIGHT].value);
-        r[3] = (row_t){.kind = ROW_TAP};
-        strcpy(r[3].label, "FIELD ORDER");
-        strcpy(r[3].value, s_set[S_SWAP].value ? "SWAPPED" : "STANDARD");
+        r[3] = (row_t){.kind = ROW_STEP};
+        strcpy(r[3].label, "SATURATION");
+        if (s_set[S_SAT].value) snprintf(r[3].value, sizeof(r[3].value), "%d%%", s_set[S_SAT].value);
+        else strcpy(r[3].value, "B/W");
         r[4] = (row_t){.kind = ROW_PAIR, .label = "CAL QUICK", .value = "CAL FULL"};
-        r[5] = (row_t){.kind = ROW_PAIR, .hi = {s_set[S_EDGE].value, false}};
+        r[5] = (row_t){.kind = ROW_PAIR, .hi = {s_set[S_EDGE].value, s_set[S_SWAP].value}};
         strcpy(r[5].label, s_set[S_EDGE].value ? "CLK FALL" : "CLK RISE");
-        strcpy(r[5].value, st->online ? st->demod : "--");
-        r[6] = (row_t){.kind = ROW_PAIR, .label = "OUTPUT", .value = "< BACK"};
+        strcpy(r[5].value, s_set[S_SWAP].value ? "FIELDS SWAP" : "FIELDS STD");
+        r[6] = (row_t){.kind = ROW_PAIR, .value = "< BACK"};
+        snprintf(r[6].label, sizeof(r[6].label), "%s", st->online ? st->demod : "--");
     }
 }
 
@@ -397,13 +401,13 @@ static void press(int x, int y, bool repeat)
         }
     } else {
         switch (row) {
-        case 0: case 1: case 2:
-            if (minus || plus) change(row == 0 ? S_BACKLIGHT : row == 1 ? S_CONTRAST : S_BRIGHT, minus ? -1 : 1);
+        case 0: case 1: case 2: case 3:
+            if (minus || plus)
+                change(row == 0 ? S_BACKLIGHT : row == 1 ? S_CONTRAST : row == 2 ? S_BRIGHT : S_SAT, minus ? -1 : 1);
             break;
-        case 3: change(S_SWAP, 1); break;
         case 4: link_key(left ? 'F' : 'B'); break;
-        case 5: if (left) change(S_EDGE, 1); else link_key('m'); break;   /* decoder P64 <-> U85Q */
-        case 6: if (left) link_key('g'); else { s_page = PAGE_RX; ++s_version; } break;
+        case 5: change(left ? S_EDGE : S_SWAP, 1); break;
+        case 6: if (left) link_key('m'); else { s_page = PAGE_RX; ++s_version; } break;   /* decoder P64 <-> U85Q */
         default: break;
         }
     }
