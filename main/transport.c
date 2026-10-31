@@ -44,6 +44,7 @@
 #include "hal/usb_serial_jtag_ll.h"
 #include "soc/gpio_sig_map.h"
 #include "soc/io_mux_reg.h"
+#include "soc/gpio_reg.h"
 #endif
 
 /* Two fixed decoders, each a program with its own LUT16 and no runtime policy
@@ -193,19 +194,30 @@ static esp_err_t prepare_tx(void)
  * pull-up is overridden off first and both lines sit low (SE0) until the
  * host has seen the detach, and D+ (GPIO14) stays pulled low while the DAC
  * owns D-. Back to USB: SE0 again, then the pull-up returns: a fresh attach,
- * the host resets the bus and enumerates. The D+ pull-up is the PHY's
- * together with GPIO14's IO_MUX pull-up (on at reset; gpio_ll.h), which the
- * GPIO calls here clear: both pads' IO_MUX words are saved and written back
- * (board 2026-10-31: without that the host saw the detach but no re-attach). */
+ * the host resets the bus and enumerates.
+ * Restoring piecewise did not re-attach (board 2026-10-31, twice): the PHY's
+ * dp_pullup bit (reset value 1) stays cleared by the override, and GPIO14's
+ * IO_MUX pull-up (gpio_ll.h: part of the D+ pull-up) by the GPIO calls. So
+ * every word USB had for the two pads is saved and written back verbatim:
+ * the PHY's conf0, both IO_MUX words, both matrix outputs and enables. */
 #define USB_DETACH_MS 100
-static uint32_t s_usb_iomux[2];
+static struct { uint32_t conf0, iomux[2], out_sel[2], enable; } s_usb_pads;
 static void route_dac_lsb(bool dac)
 {
     const gpio_num_t pin = DAC_LSB_USB_GPIO, dp = DAC_LSB_USB_GPIO + 1;
+    const uint32_t pad_bits = (1u << pin) | (1u << dp);
     const usb_serial_jtag_pull_override_vals_t detach = {.dp_pu = false, .dm_pu = false, .dp_pd = true, .dm_pd = true};
     if (dac) {
-        s_usb_iomux[0] = REG_READ(IO_MUX_GPIO13_REG);
-        s_usb_iomux[1] = REG_READ(IO_MUX_GPIO14_REG);
+        s_usb_pads.conf0 = USB_SERIAL_JTAG.conf0.val;
+        s_usb_pads.iomux[0] = REG_READ(IO_MUX_GPIO13_REG);
+        s_usb_pads.iomux[1] = REG_READ(IO_MUX_GPIO14_REG);
+        s_usb_pads.out_sel[0] = REG_READ(GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * pin);
+        s_usb_pads.out_sel[1] = REG_READ(GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * dp);
+        s_usb_pads.enable = REG_READ(GPIO_ENABLE_REG) & pad_bits;
+        printf("DAC_USB saved conf0=0x%08lx iomux13=0x%08lx iomux14=0x%08lx out13=0x%lx out14=0x%lx en=0x%lx\n",
+               (unsigned long)s_usb_pads.conf0, (unsigned long)s_usb_pads.iomux[0], (unsigned long)s_usb_pads.iomux[1],
+               (unsigned long)s_usb_pads.out_sel[0], (unsigned long)s_usb_pads.out_sel[1], (unsigned long)s_usb_pads.enable);
+        vTaskDelay(pdMS_TO_TICKS(20));   /* let that line reach the host before the detach */
         usb_serial_jtag_ll_phy_enable_pull_override(&detach);
         vTaskDelay(pdMS_TO_TICKS(USB_DETACH_MS));
         usb_serial_jtag_ll_phy_enable_pad(false);
@@ -216,15 +228,18 @@ static void route_dac_lsb(bool dac)
         gpio_set_pull_mode(pin, GPIO_FLOATING);
         esp_rom_gpio_connect_out_signal(pin, soc_parlio_signals[0].tx_units[0].data_sigs[0], false, false);
     } else {
-        esp_rom_gpio_connect_out_signal(pin, SIG_GPIO_OUT_IDX, false, false);
-        gpio_set_direction(pin, GPIO_MODE_DISABLE);
-        gpio_set_direction(dp, GPIO_MODE_DISABLE);
-        REG_WRITE(IO_MUX_GPIO13_REG, s_usb_iomux[0]);   /* pulls and function as USB left them */
-        REG_WRITE(IO_MUX_GPIO14_REG, s_usb_iomux[1]);
+        REG_WRITE(GPIO_ENABLE_W1TC_REG, pad_bits & ~s_usb_pads.enable);
+        REG_WRITE(GPIO_ENABLE_W1TS_REG, s_usb_pads.enable);
+        REG_WRITE(GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * pin, s_usb_pads.out_sel[0]);
+        REG_WRITE(GPIO_FUNC0_OUT_SEL_CFG_REG + 4u * dp, s_usb_pads.out_sel[1]);
+        REG_WRITE(IO_MUX_GPIO13_REG, s_usb_pads.iomux[0]);
+        REG_WRITE(IO_MUX_GPIO14_REG, s_usb_pads.iomux[1]);
         usb_serial_jtag_ll_phy_enable_pull_override(&detach);
         usb_serial_jtag_ll_phy_enable_pad(true);
         vTaskDelay(pdMS_TO_TICKS(USB_DETACH_MS));
-        usb_serial_jtag_ll_phy_disable_pull_override();
+        USB_SERIAL_JTAG.conf0.val = s_usb_pads.conf0;   /* pull-ups as before: the host sees an attach */
+        printf("DAC_USB restored conf0=0x%08lx iomux13=0x%08lx iomux14=0x%08lx\n", (unsigned long)USB_SERIAL_JTAG.conf0.val,
+               (unsigned long)REG_READ(IO_MUX_GPIO13_REG), (unsigned long)REG_READ(IO_MUX_GPIO14_REG));
     }
 }
 
