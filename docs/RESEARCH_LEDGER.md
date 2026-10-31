@@ -655,6 +655,29 @@ with per-profile data in `research/data/phy_noise_lab_2026-10-28.json`.
 These bench controls do not establish a lower absolute NF and are not
 production boot settings. The current-level argument is not calibrated mA.
 
+## P4 display route: C5 DAC codes to an ESP32-P4 (2026-10-31)
+
+A two-board build ([P4LINK.md](P4LINK.md)): FireBeetle 2 ESP32-C5 as the
+tuner, Guition JC1060P470C (ESP32-P4) as display and USB webcam.
+Source/tap on the C5: unchanged MODEM_DIAG Q4/I4 40 MS/s -> raw 32 KiB ring
+-> TX BitScrambler U80P64-R1/U85Q (two lookups, unique CVBS20 as [D,D]) ->
+PARLIO TX 40 MHz; the only changes are the TX clock output on GPIO8, the
+codes on GPIO2..7 and the IQ loopback on GPIO1/9/10/23-27. On the P4:
+PARLIO RX on that external clock, 8-bit, a 129 KiB ring of whole 4032 B
+nodes (partial receive, DMA position from the AXI-GDMA descriptor register,
+after zerowidth's `p4usb`), CPU core 1 keeps every second byte (20 MS/s),
+slices sync, runs a line PLL, detects broad pulses/field parity and
+resamples the 52 us active line to 800 px into woven grey frames; core 0
+converts to RGB565 for the DSI panel and feeds the hardware JPEG encoder for
+UVC. Control: UART text lines into the C5's existing `s_commands` queue.
+This extends zerowidth's `p4usb` (raw 7+7 IQ to the P4, P4 demodulation,
+own C5 firmware) by keeping C5VRX-5 complete and unmodified on the C5 and
+moving only the demodulated codes, which needs no sampling-phase search on
+the P4 and fits the P4 board's nine free header pins. Evidence: both
+firmwares build; a host test of the P4 decoder on synthetic PAL/NTSC
+(`p4/test/test_cvbs.c`). Not measured: anything on hardware (link
+integrity at 40 MHz, the moved IQ pads' sampling phase, picture, UVC).
+
 ## Removed sync flywheel (PR #212/#218 history, removed 2026-10-25)
 
 The C5VRX-5 flywheel (PR #212, witness fix PR #218, bounded sync-loss

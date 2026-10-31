@@ -17,7 +17,18 @@
  * GPIO27 is exclusively IQ-owned: do not drive it as a status LED. The LED/resistor remains connected; 40 MS/s capture and
  * sampling-phase margin on an unmodified XIAO still need board validation.
  * These are GPIO-matrix loopbacks; no external IQ wiring is required. */
+#ifdef C5VRX_P4LINK
+/* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): the loopback
+ * uses pads the link and the IO board wiring leave alone: the GDI display
+ * connector's SPI/I2C/control lines (no display fitted) and IO1. The LSBs
+ * take the two loaded pads: IO1 (battery divider) and GPIO27 (GDI LCD_CS).
+ * Q = 1/9/10/23, I = 27/24/25/26. GPIO26/27 are on the IO board: leave them
+ * unconnected. Not GPIO0 (3V3_C switch), 13/14 (USB), 15 (LED), 28 (BOOT).
+ * Sampling-phase margin on these pads still needs board validation. */
+#define RF_IQ_GPIO_NUMS {1, 9, 10, 23, 27, 24, 25, 26}
+#else
 #define RF_IQ_GPIO_NUMS {1, 0, 25, 2, 27, 5, 3, 4}
+#endif
 
 esp_err_t rf_start(void);
 /* Stop the dump writer and Wi-Fi, request a USB download boot and restart,

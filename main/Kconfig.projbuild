@@ -1,0 +1,23 @@
+menu "C5VRX board"
+
+    choice C5VRX_BOARD
+        prompt "Board and video output"
+        default C5VRX_BOARD_XIAO_DAC
+        help
+            Where the received video goes. The XIAO build recovers the
+            composite waveform onto the six-bit resistor DAC.
+
+        config C5VRX_BOARD_XIAO_DAC
+            bool "XIAO ESP32-C5 with the resistor DAC (composite out)"
+
+        config C5VRX_BOARD_FIREBEETLE_P4LINK
+            bool "FireBeetle 2 ESP32-C5 as tuner of an ESP32-P4 display (P4 link)"
+            help
+                The full receiver runs as on the XIAO; the six-bit DAC codes
+                leave on GPIO2..7 with the PARLIO TX clock on GPIO8, and
+                UART GPIO11/12 carries status and commands. The ESP32-P4
+                firmware in p4/ shows the picture and streams it over USB
+                UVC (docs/P4LINK.md).
+    endchoice
+
+endmenu

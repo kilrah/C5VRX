@@ -56,7 +56,16 @@ static const void *tracker_program(void) { return demod_program(s_demod); }
  * plus 200R). Do not change the tested pin order. D10/GPIO10 and D3/GPIO7
  * are reserved for future seventh/eighth branches; keep them disconnected
  * here until a complete wider-DAC implementation is hardware-validated. */
+#ifdef C5VRX_P4LINK
+/* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): the same 6-bit
+ * codes, LSB first on GPIO2..7, and the TX clock on GPIO8 (data changes on
+ * its falling edge, shift_edge NEG; the P4 samples on the rising one). A
+ * resistor DAC may still hang on GPIO2..7 for a composite output. */
+static const int s_dac_gpio[8] = {2, 3, 4, 5, 6, 7, -1, -1};
+#define P4LINK_CLK_GPIO 8
+#else
 static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
+#endif
 
 DMA_ATTR __attribute__((aligned(64))) uint8_t s_raw_ring[RAW_RING_BYTES];
 static parlio_rx_unit_handle_t s_rx;
@@ -157,6 +166,9 @@ static esp_err_t prepare_tx(void)
         .bit_pack_order = PARLIO_BIT_PACK_ORDER_LSB,
     };
     for (unsigned k = 0; k < 8u; ++k) cfg.data_gpio_nums[k] = s_dac_gpio[k];
+#ifdef C5VRX_P4LINK
+    cfg.clk_out_gpio_num = P4LINK_CLK_GPIO;
+#endif
     esp_err_t err = parlio_new_tx_unit(&cfg, &s_tx);
     if (err != ESP_OK) return err;
     const bitscrambler_config_t bs = {.dir = BITSCRAMBLER_DIR_TX, .attach_to = SOC_BITSCRAMBLER_ATTACH_PARL_IO};

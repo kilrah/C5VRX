@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,   Size,     Flags
+# 4 MB flash (FireBeetle 2 ESP32-C5, ESP32-C5-WROOM-1U-N4;
+# sdkconfig.p4link.defaults): the same NVS and flight log as partitions.csv
+# with a 2 MB application slot.
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x200000,
+flightlog,data, 0x99,    0x210000, 0x180000,

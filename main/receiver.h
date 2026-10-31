@@ -175,6 +175,13 @@ bool control_prepare(void); /* reserve unchanged control stack before driver hea
 video_standard_t menu_standard(void);
 void control_print(void);
 void control_print_beat(void);   /* STATUS line every 2 s (console.c) */
+#ifdef C5VRX_P4LINK
+/* Commands only the P4 link sends (p4link.c, docs/P4LINK.md), queued on
+ * s_commands next to the console keys: tune channel index n, AFC on/off. */
+#define P4LINK_CMD_CHANNEL 0x1000
+#define P4LINK_CMD_AFC     0x2000
+void p4link_start(void);
+#endif
 
 /* ---- calibration*.c (module-internal: calibration_internal.h) ---- */
 void calibration_start(void);

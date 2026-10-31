@@ -1,0 +1,9 @@
+# FireBeetle 2 ESP32-C5 (DFRobot DFR1284, ESP32-C5-WROOM-1U-N4) as the tuner
+# of an ESP32-P4 display (docs/P4LINK.md), on top of sdkconfig.defaults:
+#   idf.py -B build-p4link -DSDKCONFIG=sdkconfig.p4link \
+#     "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.p4link.defaults" build
+# DAC codes on GPIO2..7, TX clock on GPIO8, UART on GPIO11/12.
+CONFIG_C5VRX_BOARD_FIREBEETLE_P4LINK=y
+# 4 MB flash, no PSRAM.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_4mb.csv"

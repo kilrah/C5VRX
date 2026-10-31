@@ -1,0 +1,5 @@
+dependencies:
+  idf: '>=5.5'
+  espressif/esp_lcd_jd9165: '^2.0.2'
+  espressif/esp_lcd_touch_gt911: '^1.2.1'
+  espressif/usb_device_uvc: '*'

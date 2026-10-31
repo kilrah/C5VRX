@@ -171,6 +171,18 @@ KiCad ERC/DRC and schematic/PCB parity checks are clean; REV C has not been buil
   Flash the full image when switching. Boot `heap_min` rose from ~2.1 KB to
   ~21.9 KB; PAL and long runs are pending
   ([measurements](docs/FINDINGS.md#psram-8-mb-on-the-xiao-now-mapped-board-2026-10-26)).
+- **FireBeetle 2 ESP32-C5 + ESP32-P4 display** (the C5 receives as on the
+  XIAO; its DAC codes, clock and a UART go to a Guition JC1060P470C, which
+  shows the picture on its 1024 x 600 touch LCD with a settings column and
+  streams it as a USB webcam; builds only, not yet board-checked):
+
+  ```sh
+  idf.py -B build-p4link -DSDKCONFIG=sdkconfig.p4link "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.p4link.defaults" build
+  python tools/flash.py PORT --build build-p4link
+  cd p4 && idf.py build flash   # ESP-IDF 5.5, the P4 side
+  ```
+
+  Wiring and details: [docs/P4LINK.md](docs/P4LINK.md).
 
 ## First boot
 

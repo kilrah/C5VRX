@@ -387,6 +387,13 @@ static void command(int c, unsigned *menu_idle)
         printf("COMMAND %c refused=busy (a calibration or lane test owns the picture; retry when it ends)\n", c);
         return;
     }
+#ifdef C5VRX_P4LINK
+    if (c >= P4LINK_CMD_CHANNEL && c < P4LINK_CMD_CHANNEL + (int)FPV_CHANNELS) {
+        if (rf_set_channel((size_t)(c - P4LINK_CMD_CHANNEL)) == ESP_OK) after_retune();
+        return;
+    }
+    if (c == P4LINK_CMD_AFC) { toggle_afc(); if (s_menu_active) menu_render(); return; }
+#endif
     switch (c) {
     case 'G': receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); break;
     /* Decoder P64 <-> U85Q: a verified restart behind the shared 5 s guard. */

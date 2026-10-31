@@ -271,9 +271,19 @@ static esp_err_t reserve_chain(video_standard_t standard, bool interlaced, unsig
 static esp_err_t build_chain(video_standard_t standard)
 {
     unsigned required = 0;
+#ifdef C5VRX_P4LINK
+    /* P4-link build (docs/P4LINK.md): always the progressive field. The
+     * splash chain is held while receiver_start creates the gain tasks; on a
+     * FireBeetle without PSRAM the interlaced one (when it fitted) left them
+     * no room: gain_fast/gain_obs ESP_ERR_NO_MEM boot loops (2026-10-31).
+     * The P4 line-doubles a progressive field. */
+    bool interlaced = false;
+    esp_err_t err = reserve_chain(standard, false, &required);
+#else
     bool interlaced = true;
     esp_err_t err = reserve_chain(standard, true, &required);
-    if (err == ESP_ERR_NO_MEM) {
+#endif
+    if (err == ESP_ERR_NO_MEM && interlaced) {
         interlaced = false;
         err = reserve_chain(standard, false, &required);
         if (err == ESP_OK) printf("[MENU] progressive fallback: interlaced chain did not fit\n");

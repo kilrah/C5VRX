@@ -86,6 +86,8 @@ permitted GPL reuse. Credit external sources used by C5VRX with the same care.
   repository root: `main/` (firmware), `test/` (host tests), `research/`
   (simulations, generators, data), `docs/` (findings, field-test protocol,
   task plan, DAC schematic), `tools/` (console/log tools, CI/Pages helpers).
+- `p4/`: separate ESP-IDF 5.5 project for the ESP32-P4 display of the
+  FireBeetle 2 ESP32-C5 P4-link build (docs/P4LINK.md); not built by CI.
 - Archived generations, never built: `legacy/c5vrx1`, `legacy/c5vrx2`,
   `legacy/c5vrx3` (the former root firmware, its docs and tools, retired
   2026-10-12) and `legacy/c5vrx4` (the former `experiments/c5vrx-4`).

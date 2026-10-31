@@ -105,6 +105,13 @@ void app_main(void)
     control_start();
     if (splash) splash_wait_gain(splash_t0, splash_holds, ready_deadline);
     menu_splash_end();
+#ifdef C5VRX_P4LINK
+    /* Status and commands for the P4 display (docs/P4LINK.md). After the
+     * splash: its descriptor chain and the receiver tasks are the boot heap
+     * peak (docs/FINDINGS.md "Boot heap margin"); the UART driver and task
+     * there left heap_min at 120 bytes on a FireBeetle (2026-10-31). */
+    p4link_start();
+#endif
     s_boot_stage = "ready";
     s_boot_ready_ms = (esp_timer_get_time() - app_t0) / 1000;
     printf("BOOT_TIMING ready_ms=%lld target_ms=10000\n", s_boot_ready_ms);
