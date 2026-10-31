@@ -172,6 +172,8 @@ static void console_task(void *arg)
             case 'Y': case 'W': case 'X': flightlog_console((char)c); break;
 #ifdef C5VRX_LCD
             case 'V': lcd_dump(); break;
+            case 'J': lcd_quiet_toggle(); break;
+            case 'K': lcd_dc_toggle(); break;
 #endif
             case 'h': case '?': help(); break;
             case 'o': case 'e': case 'v': case 'f': case 'n': case 'x': case 'c': case 'b': case 's': case 'g': case 'A': case 'U': case 'G': case 'Q': case 'Z': case 'm': {

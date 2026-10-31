@@ -48,6 +48,12 @@ typedef struct {
 /** Build the tables. Call once. */
 void grab_init(void);
 
+/** Between grabs: re-estimate the I/Q DC offset from the ring and rebuild
+ * the angle table around it when it moved (about 1 ms when it does). */
+void grab_track_dc(void);
+void grab_dc(float *i, float *q);   /* the estimate, cells */
+bool grab_dc_toggle(void);          /* bench: compensation on/off, returns on */
+
 /** Forget the lock (after a channel change, for example). */
 void grab_unlock(void);
 

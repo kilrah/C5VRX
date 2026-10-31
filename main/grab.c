@@ -177,18 +177,69 @@ typedef struct {
 
 /* ------------------------------------------------------------------ setup */
 
-void grab_init(void)
+/* DC compensation. Near the edge of range the carrier spans only a few
+ * cells of the 4-bit grid, and a residual DC offset of one cell (the
+ * receiver's DC servo between steps after a gain change) left no picture at
+ * a level that gave one moments before (board 2026-10-30, -86 dBm). The
+ * angle table measures each point from the estimated DC instead of the grid
+ * origin. */
+#define DC_REBUILD 0.1f                         /* cells of change before the table is rebuilt */
+#define DC_SAMPLES 8192u                        /* ring bytes per estimate (205 us, three lines) */
+static float s_dc_i, s_dc_q, s_dc_built_i = 1e9f, s_dc_built_q = 1e9f;
+
+static void build_angles(float di, float dq)
 {
     for (unsigned b = 0u; b < 256u; ++b) {
-        int q = k_sign4[b & 0x0fu];
-        int i = k_sign4[b >> 4];
-        if (i == 0 && q == 0) {
+        const float q = (float)k_sign4[b & 0x0fu] - dq;
+        const float i = (float)k_sign4[b >> 4] - di;
+        if (q * q + i * i < 0.0625f) {           /* on the DC point itself: no angle */
             s_ang[b] = 0u;
         } else {
-            float a = atan2f((float)q, (float)i) * (128.0f / (float)M_PI);
+            float a = atan2f(q, i) * (128.0f / (float)M_PI);
             s_ang[b] = (uint8_t)((int)lroundf(a) & 0xff);
         }
     }
+    s_dc_built_i = di;
+    s_dc_built_q = dq;
+}
+
+static bool s_dc_off;   /* bench (console K): the table centred on code 0/0, as before */
+
+bool grab_dc_toggle(void)
+{
+    s_dc_off = !s_dc_off;
+    s_dc_built_i = s_dc_built_q = 1e9f;   /* rebuild on the next call */
+    return !s_dc_off;
+}
+
+void grab_track_dc(void)
+{
+    uint32_t off;
+    if (s_dc_off) {
+        if (s_dc_built_i != 0.0f || s_dc_built_q != 0.0f) build_angles(0.0f, 0.0f);
+        return;
+    }
+    if (!transport_rx_write_offset(&off)) return;
+    /* Completed samples well behind the writer: [off - 3 DC_SAMPLES/2, off - DC_SAMPLES/2). */
+    uint32_t r = (off + RING - 3u * DC_SAMPLES / 2u) & RING_MASK;
+    int32_t si = 0, sq = 0;
+    for (unsigned k = 0; k < DC_SAMPLES; ++k, r = (r + 1u) & RING_MASK) {
+        const uint8_t b = s_ring[r];
+        si += k_sign4[b >> 4];
+        sq += k_sign4[b & 0x0fu];
+    }
+    /* A rotating FM carrier averages out; what remains is the offset. */
+    s_dc_i += 0.5f * ((float)si / DC_SAMPLES - s_dc_i);
+    s_dc_q += 0.5f * ((float)sq / DC_SAMPLES - s_dc_q);
+    if (fabsf(s_dc_i - s_dc_built_i) > DC_REBUILD || fabsf(s_dc_q - s_dc_built_q) > DC_REBUILD)
+        build_angles(s_dc_i, s_dc_q);
+}
+
+void grab_dc(float *i, float *q) { *i = s_dc_i; *q = s_dc_q; }
+
+void grab_init(void)
+{
+    build_angles(0.0f, 0.0f);
     s_ring = s_raw_ring;
     s_src = s_ring;
     s_src_mask = RING_MASK;

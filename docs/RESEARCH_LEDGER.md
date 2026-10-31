@@ -673,10 +673,12 @@ measured 24-25 PAL frames/s on a XIAO) and follows zerowidth's `p4usb`
 direction of a software decoder; it is not the C5VRX-1 CPU-paced route
 (the CPU never paces IQ here). Evidence: on one board, a live PAL picture
 from a bench VTX (B5, -38 dBm), 240 of 256 pictures complete in 18 s (13.3
-complete pictures/s), sync jitter 15 ns, AFC locked; a marker probe showing
+complete pictures/s), sync jitter 15 ns, AFC locked; at the edge (VTX in
+foil) ~80 % of pictures complete at -87.5..-90 dBm (C/N 7-9.5 dB) with the
+grabber's own I/Q DC compensation (61 % without, same position, A/B); a marker probe showing
 the RX descriptor register one node ahead of the data (docs/FINDINGS.md);
 host simulation of `grab.c` on synthetic FM PAL/NTSC. Not measured: NTSC,
-weak signal, the slower gain loop's fade behaviour, or any range.
+the slower gain loop's fade behaviour in flight, or range in the field.
 
 ## Removed sync flywheel (PR #212/#218 history, removed 2026-10-25)
 

@@ -287,6 +287,7 @@ void lcd_start(void);
 void lcd_print(void);
 void lcd_dump(void);   /* console V */
 void lcd_quiet_toggle(void);   /* console J (bench) */
+void lcd_dc_toggle(void);      /* console K (bench) */
 #endif
 
 /* ---- profile.c ---- */

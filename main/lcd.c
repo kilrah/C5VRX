@@ -62,6 +62,12 @@ static TaskHandle_t s_flush_task, s_grab_task;
 static volatile bool s_picture;          /* s_img holds something to show */
 static volatile bool s_quiet;            /* bench (console J): no SPI traffic, no grabbing */
 
+void lcd_dc_toggle(void)
+{
+    const bool on = grab_dc_toggle();
+    printf("LCD dc_compensation=%u\n", on);
+}
+
 void lcd_quiet_toggle(void)
 {
     s_quiet = !s_quiet;
@@ -307,6 +313,7 @@ static void grab_task(void *arg)
             grab_unlock();
         }
         grab_info_t info;
+        grab_track_dc();
         const int64_t grab_t0 = esp_timer_get_time();
         const int rows = grab_frame(&s_img[0][0], &info, GRAB_TIMEOUT_MS);
         if (info.max_stall_us >= 3000) {
@@ -431,6 +438,9 @@ void lcd_print(void)
            (unsigned long)s_stats.stalls_1ms, (unsigned long)s_stats.stalls_5ms, (unsigned long)s_stats.stalls_20ms);
     uint32_t writes, write_sum_us, write_max_us;
     receiver_write_time(&writes, &write_sum_us, &write_max_us);
+    float dc_i, dc_q;
+    grab_dc(&dc_i, &dc_q);
+    printf("LCD_DC i=%.2f q=%.2f (cells, the grabber's angle table centre)\n", dc_i, dc_q);
     printf("LCD_GAINW writes=%lu write_us_mean=%lu write_us_max=%lu stalls>=3ms_with_write=%lu without=%lu\n",
            (unsigned long)writes, (unsigned long)(writes ? write_sum_us / writes : 0u), (unsigned long)write_max_us,
            (unsigned long)s_stats.stalls_3ms_write, (unsigned long)s_stats.stalls_3ms_nowrite);
