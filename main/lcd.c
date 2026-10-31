@@ -12,9 +12,9 @@
  *   the menu is open, to the panel in 4-row strips, two strip buffers in
  *   turn, so one is converted while the other is on the SPI DMA. It sleeps
  *   while the DMA runs; its work between is tens of microseconds.
- * Pins (Waveshare): SCLK 7, MOSI 6, CS 23, DC 24, RST 26, backlight 10;
- * RGB LED 8 is held low. The IQ loopback pins (rf.h) are unchanged; 4 and 5
- * are the microSD socket's CS and MISO, so leave the socket empty. */
+ * Pins (Waveshare): SCLK 7, MOSI 6, CS 23, DC 24, RST 26, backlight 10.
+ * The RGB LED's GPIO8 carries an IQ bit (rf.h); 4 and 5 are IQ bits and the
+ * microSD socket's CS and MISO, so leave the socket empty. */
 #include "receiver.h"
 #include <stdio.h>
 #include <string.h>
@@ -39,7 +39,6 @@
 #define PIN_DC 24
 #define PIN_RST 26
 #define PIN_BACKLIGHT 10
-#define PIN_RGB_LED 8
 #define PIN_BOOT 28             /* the menu button (control.c BOOT_BUTTON), active low */
 #define STRIP_ROWS 4             /* 2.5 KiB per buffer: SRAM is tight at the boot peak */
 #define GRAB_TIMEOUT_MS 70      /* ~3.5 PAL fields: the rows the first, partial field missed get the third */
@@ -372,12 +371,11 @@ void lcd_start(void)
     }
     for (unsigned x = 0; x < LCD_W; ++x) s_menu_x[x] = (uint16_t)(x * MENU_UI_WIDTH / LCD_W);
     const gpio_config_t out = {
-        .pin_bit_mask = (1ULL << PIN_BACKLIGHT) | (1ULL << PIN_RGB_LED),
+        .pin_bit_mask = 1ULL << PIN_BACKLIGHT,
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&out);
     gpio_set_level(PIN_BACKLIGHT, 0);
-    gpio_set_level(PIN_RGB_LED, 0);   /* a floating WS2812 input latches noise */
     const spi_bus_config_t bus = {
         .sclk_io_num = PIN_SCLK,
         .mosi_io_num = PIN_MOSI,

@@ -245,6 +245,9 @@ void menu_render(void)
         .std_mode = (int)s_std_mode, .std_out_pal = s_video_std == VIDEO_STD_PAL,
         .detected_valid = s_detected_std_valid, .detected_pal = s_detected_std == VIDEO_STD_PAL,
         .output = transport_output(), .output_name = transport_output_name(),
+#ifdef C5VRX_LCD
+        .dac_bits = transport_dac_bits(),
+#endif
         .gain_mode = receiver_gain_mode_name(mode, gain_mode, sizeof(gain_mode)), .gain_auto = receiver_gain_mode_auto(mode),
         .demod = transport_demod() == TRANSPORT_DEMOD_U85Q ? "U85Q" : "P64",
         .gain = s_current_gain, .gain_max = rf_gain_table()->max_index,

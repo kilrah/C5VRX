@@ -153,6 +153,19 @@ static void demod_next(void)
            transport_program_name(), ok ? "" : " (guard, fault or rollback: T TRANSPORT and DEMOD)");
 }
 
+#ifdef C5VRX_LCD
+/* Waveshare LCD board DAC 5 <-> 6 bit (menu DAC, console d), NVS "dac_bits".
+ * 6 bit takes GPIO13 (USB D-) for the LSB: USB, and this console, go off. */
+static void dac_bits_next(void)
+{
+    const uint8_t next = transport_dac_bits() == 6u ? 5u : 6u;
+    if (next == 6u) printf("DAC 6 bit: USB off now; back to 5 bit in the menu, or flash with BOOT held\n");
+    const bool ok = transport_set_dac_bits(next);
+    if (ok) (void)blob_store("dac_bits", &next, sizeof(next));
+    printf("DAC bits=%u result=%s\n", transport_dac_bits(), ok ? "ok" : "refused");
+}
+#endif
+
 static void after_retune(void)
 {
     ++s_control_epoch;
@@ -370,6 +383,9 @@ static void menu_action(void)
     case MENU_EXPERIMENTAL: s_exp_sub = 0; break;
     case MENU_CALIBRATE: s_cal_sub = MENU_CAL_QUICK; break;   /* opens the QUICK / FULL / BACK submenu */
     case MENU_OUTPUT: (void)transport_set_output((transport_output() + 1u) % OUTPUT_LEVELS); break;
+#ifdef C5VRX_LCD
+    case MENU_DAC_BITS: dac_bits_next(); break;
+#endif
     case MENU_GAIN: receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); break;
     case MENU_DEMOD: demod_next(); break;   /* applied by the verified restart on menu exit */
     case MENU_DAC: menu_dac_step(); break;
@@ -392,6 +408,9 @@ static void command(int c, unsigned *menu_idle)
     case 'G': receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); break;
     /* Decoder P64 <-> U85Q: a verified restart behind the shared 5 s guard. */
     case 'm': demod_next(); break;
+#ifdef C5VRX_LCD
+    case 'd': dac_bits_next(); if (s_menu_active) menu_render(); break;
+#endif
     /* Bench: the real gain step of every table row pair (receiver.c). */
     case 'Q': receiver_pair_sweep_toggle(); break;
     /* DAC self-test: open the menu on DAC TEST, then step like a hold. */

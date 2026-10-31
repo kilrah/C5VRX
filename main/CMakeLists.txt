@@ -4,7 +4,7 @@ set(srcs
     "calibration_bench.c" "menu.c" "menu_ui.c" "menu_raster.c" "analog_video_detect.c"
     "experimental.c" "experimental_phy.c" "settings.c" "console.c" "profile.c" "diag.c" "flightlog.c" "sense_lab.c")
 # Waveshare ESP32-C5-LCD-1.47 (main/Kconfig.projbuild, docs/LCD147.md): the
-# picture and the menu on the ST7789 LCD instead of the resistor DAC.
+# picture and the menu on the ST7789 LCD; the DAC on header pins.
 if(CONFIG_C5VRX_BOARD_WAVESHARE_LCD147)
     list(APPEND srcs "lcd.c" "grab.c")
 endif()

@@ -17,7 +17,13 @@
  * GPIO27 is exclusively IQ-owned: do not drive it as a status LED. The LED/resistor remains connected; 40 MS/s capture and
  * sampling-phase margin on an unmodified XIAO still need board validation.
  * These are GPIO-matrix loopbacks; no external IQ wiring is required. */
+#ifdef C5VRX_LCD
+/* Waveshare LCD board: I's bit 2 on GPIO8 (the WS2812 RGB LED's data line,
+ * which shows random colours) frees header GPIO3 for the DAC (transport.c). */
+#define RF_IQ_GPIO_NUMS {1, 0, 25, 2, 27, 5, 8, 4}
+#else
 #define RF_IQ_GPIO_NUMS {1, 0, 25, 2, 27, 5, 3, 4}
+#endif
 
 esp_err_t rf_start(void);
 /* Stop the dump writer and Wi-Fi, request a USB download boot and restart,

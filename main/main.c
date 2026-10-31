@@ -92,6 +92,11 @@ void app_main(void)
         uint8_t demod;   /* the decoder of the last session (console m, NVS "demod"); set before the first start */
         if (blob_load("demod", &demod, sizeof(demod)) && demod < TRANSPORT_DEMODS && transport_set_demod(demod))
             printf("PREFS restored demod=%s\n", transport_demod_name(demod));
+#ifdef C5VRX_LCD
+        uint8_t dac_bits;   /* 6 turns USB off at transport start: flash with BOOT held (docs/LCD147.md) */
+        if (blob_load("dac_bits", &dac_bits, sizeof(dac_bits)) && transport_set_dac_bits(dac_bits))
+            printf("PREFS restored dac_bits=%u%s\n", dac_bits, dac_bits == 6u ? " (USB turns off now)" : "");
+#endif
     }
     s_boot_stage = "transport";
     if (transport_start() != ESP_OK) {

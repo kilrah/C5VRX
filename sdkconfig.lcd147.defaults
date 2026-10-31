@@ -1,7 +1,8 @@
 # Waveshare ESP32-C5-LCD-1.47 (docs/LCD147.md), on top of sdkconfig.defaults:
 #   idf.py -B build-lcd147 -DSDKCONFIG=sdkconfig.lcd147 \
 #     "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.lcd147.defaults" build
-# The picture and the menu go to the board's ST7789 LCD; there is no DAC.
+# The picture and the menu go to the board's ST7789 LCD; the DAC (5 or 6
+# bits, menu DAC) to header pins.
 CONFIG_C5VRX_BOARD_WAVESHARE_LCD147=y
 # ESP32-C5FH4: 4 MB of in-package flash, no PSRAM.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

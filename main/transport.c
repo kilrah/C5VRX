@@ -37,6 +37,14 @@
 #include "soc/bitscrambler_struct.h"
 #include "soc/parl_io_struct.h"
 #include "soc/pcr_struct.h"
+#ifdef C5VRX_LCD
+#include "driver/gpio.h"
+#include "esp_private/gpio.h"
+#include "hal/parlio_periph.h"
+#include "hal/usb_serial_jtag_ll.h"
+#include "soc/gpio_sig_map.h"
+#include "soc/io_mux_reg.h"
+#endif
 
 /* Two fixed decoders, each a program with its own LUT16 and no runtime policy
  * (no kp ladder, no LP): U80P64-R1 (default) and U85Q (operator decision
@@ -57,10 +65,14 @@ static const void *tracker_program(void) { return demod_program(s_demod); }
  * are reserved for future seventh/eighth branches; keep them disconnected
  * here until a complete wider-DAC implementation is hardware-validated. */
 #ifdef C5VRX_LCD
-/* Waveshare ESP32-C5-LCD-1.47: no DAC. GPIO23/24 are the LCD's CS/DC and
- * GPIO8 its RGB LED, so TX runs (the verified restarts stay identical) but
- * drives no pin; lcd.c shows the picture. */
-static const int s_dac_gpio[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+/* Waveshare ESP32-C5-LCD-1.47: the same 6-bit codes, on header pins beside
+ * the LCD (GPIO23/24 are its CS/DC). Bits 1..5 always on GPIO9/15/3/12/11
+ * (header 5/4/16/8/9; 3.9k/2k/1k/470R/240R); the 8.2k LSB on GPIO13 (USB
+ * D-, header 6) only in 6-bit mode, which turns USB off (transport_set_dac_bits).
+ * Not GPIO27/2: boot straps (GPIO27 has the board's 10k pull-up). */
+static const int s_dac_gpio[8] = {-1, 9, 15, 3, 12, 11, -1, -1};
+#define DAC_LSB_USB_GPIO 13
+static uint8_t s_dac_bits = 5u;
 #else
 static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
 #endif
@@ -171,6 +183,64 @@ static esp_err_t prepare_tx(void)
     if (err != ESP_OK) return err;
     return enable_tx();
 }
+
+#ifdef C5VRX_LCD
+/* DAC bit 0 onto GPIO13 (USB D-), or back to USB. The TX unit, program and
+ * LUT stay as they are: only the pad changes owner, so no restart. The
+ * console never blocks on output (main.c).
+ * Switching the pads off alone left the host attached (board 2026-10-31: it
+ * saw no disconnect, so 6 -> 5 bit never enumerated again). So the PHY's
+ * pull-up is overridden off first and both lines sit low (SE0) until the
+ * host has seen the detach, and D+ (GPIO14) stays pulled low while the DAC
+ * owns D-. Back to USB: SE0 again, then the pull-up returns: a fresh attach,
+ * the host resets the bus and enumerates. The D+ pull-up is the PHY's
+ * together with GPIO14's IO_MUX pull-up (on at reset; gpio_ll.h), which the
+ * GPIO calls here clear: both pads' IO_MUX words are saved and written back
+ * (board 2026-10-31: without that the host saw the detach but no re-attach). */
+#define USB_DETACH_MS 100
+static uint32_t s_usb_iomux[2];
+static void route_dac_lsb(bool dac)
+{
+    const gpio_num_t pin = DAC_LSB_USB_GPIO, dp = DAC_LSB_USB_GPIO + 1;
+    const usb_serial_jtag_pull_override_vals_t detach = {.dp_pu = false, .dm_pu = false, .dp_pd = true, .dm_pd = true};
+    if (dac) {
+        s_usb_iomux[0] = REG_READ(IO_MUX_GPIO13_REG);
+        s_usb_iomux[1] = REG_READ(IO_MUX_GPIO14_REG);
+        usb_serial_jtag_ll_phy_enable_pull_override(&detach);
+        vTaskDelay(pdMS_TO_TICKS(USB_DETACH_MS));
+        usb_serial_jtag_ll_phy_enable_pad(false);
+        gpio_func_sel(dp, PIN_FUNC_GPIO);
+        gpio_set_direction(dp, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(dp, GPIO_PULLDOWN_ONLY);
+        gpio_func_sel(pin, PIN_FUNC_GPIO);
+        gpio_set_pull_mode(pin, GPIO_FLOATING);
+        esp_rom_gpio_connect_out_signal(pin, soc_parlio_signals[0].tx_units[0].data_sigs[0], false, false);
+    } else {
+        esp_rom_gpio_connect_out_signal(pin, SIG_GPIO_OUT_IDX, false, false);
+        gpio_set_direction(pin, GPIO_MODE_DISABLE);
+        gpio_set_direction(dp, GPIO_MODE_DISABLE);
+        REG_WRITE(IO_MUX_GPIO13_REG, s_usb_iomux[0]);   /* pulls and function as USB left them */
+        REG_WRITE(IO_MUX_GPIO14_REG, s_usb_iomux[1]);
+        usb_serial_jtag_ll_phy_enable_pull_override(&detach);
+        usb_serial_jtag_ll_phy_enable_pad(true);
+        vTaskDelay(pdMS_TO_TICKS(USB_DETACH_MS));
+        usb_serial_jtag_ll_phy_disable_pull_override();
+    }
+}
+
+uint8_t transport_dac_bits(void) { return s_dac_bits; }
+
+/* 5 (USB on) or 6 (USB off, LSB on GPIO13); before the first start only
+ * recorded, transport_start routes it. */
+bool transport_set_dac_bits(uint8_t bits)
+{
+    if (bits != 5u && bits != 6u) return false;
+    if (bits == s_dac_bits) return true;
+    if (s_tx) route_dac_lsb(bits == 6u);
+    s_dac_bits = bits;
+    return true;
+}
+#endif
 
 static esp_err_t start_rx(void)
 {
@@ -526,6 +596,9 @@ esp_err_t transport_start(void)
         s_transport_fault = true;
         return err;
     }
+#ifdef C5VRX_LCD
+    if (s_dac_bits == 6u) route_dac_lsb(true);
+#endif
     return resume_live(NULL) ? ESP_OK : ESP_FAIL;
 }
 

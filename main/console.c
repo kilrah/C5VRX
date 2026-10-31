@@ -113,6 +113,9 @@ static void help(void)
            "  ! one bench RX sampling-phase slip (T shows phase status),\n"
            "  S + suite key: bench PHY sensitivity lab with the VTX ON (docs/PHY_SENSITIVITY_LAB.md),\n"
            "  ` reboot to USB download (flashing)\n");
+#ifdef C5VRX_LCD
+    printf("  LCD board: d DAC 5 <-> 6 bit (saved; 6 bit turns USB off), V frame dump, J panel/grabber off (bench), K grabber DC compensation\n");
+#endif
 }
 
 /* The USB reader runs above every receiver task: the download key and the
@@ -176,7 +179,11 @@ static void console_task(void *arg)
             case 'K': lcd_dc_toggle(); break;
 #endif
             case 'h': case '?': help(); break;
-            case 'o': case 'e': case 'v': case 'f': case 'n': case 'x': case 'c': case 'b': case 's': case 'g': case 'A': case 'U': case 'G': case 'Q': case 'Z': case 'm': {
+            case 'o': case 'e': case 'v': case 'f': case 'n': case 'x': case 'c': case 'b': case 's': case 'g': case 'A': case 'U': case 'G': case 'Q': case 'Z': case 'm':
+#ifdef C5VRX_LCD
+            case 'd':
+#endif
+            {
                 int command = c;
                 if (s_commands) (void)xQueueSend(s_commands, &command, 0);
                 break;

@@ -680,6 +680,18 @@ the RX descriptor register one node ahead of the data (docs/FINDINGS.md);
 host simulation of `grab.c` on synthetic FM PAL/NTSC. Not measured: NTSC,
 the slower gain loop's fade behaviour in flight, or range in the field.
 
+DAC beside the LCD (2026-10-31, builds only, not board-checked): the same
+U80P64-R1/U85Q TX path drives the DAC's codes onto header pins again. The
+header has 11 usable GPIOs and the IQ loopback needs 8 pads, so I's bit 2
+moved from GPIO3 to GPIO8 (the RGB LED's data line) and the DAC takes
+GPIO9/15/3/12/11 for bits 1..5. Bit 0 (8.2k) goes to GPIO13 (USB D-) only
+in the menu's 6-bit mode, which turns the USB pads off; 5-bit drops the LSB
+(truncation). The switch is a pad-owner change, not a restart: the TX
+program, LUT and cadence are unchanged. GPIO27/2 (boot straps) are not
+used for the DAC (C5VRX-1 `analog-vrx-bom.md`). A seventh bit was not
+attempted: the 16-bit LUT word holds the 6-bit code, the state and the
+tokens; an earlier finding put the benefit of more bits low.
+
 ## Removed sync flywheel (PR #212/#218 history, removed 2026-10-25)
 
 The C5VRX-5 flywheel (PR #212, witness fix PR #218, bounded sync-loss

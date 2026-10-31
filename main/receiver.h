@@ -77,6 +77,12 @@ uint32_t transport_restart_errors(void);
 unsigned transport_output(void);
 const char *transport_output_name(void);
 bool transport_set_output(unsigned level);
+#ifdef C5VRX_LCD
+/* Waveshare LCD board DAC width (menu DAC, console d, NVS "dac_bits"):
+ * 5 = USB on, 6 = the LSB on GPIO13 (USB D-) and USB off. Live, no restart. */
+uint8_t transport_dac_bits(void);
+bool transport_set_dac_bits(uint8_t bits);
+#endif
 void transport_stop_chain(void);
 void transport_poll_faults(void);
 uint32_t transport_fault_count(void);

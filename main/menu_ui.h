@@ -15,6 +15,9 @@
 #include "experimental.h"
 
 enum { MENU_BAND, MENU_CHANNEL, MENU_SCAN, MENU_VIDEO, MENU_FILTER, MENU_OUTPUT,
+#ifdef C5VRX_LCD
+       MENU_DAC_BITS,   /* Waveshare LCD board: DAC 5 BIT (USB on) / 6 BIT (USB off) */
+#endif
        MENU_CALIBRATE, MENU_EXPERIMENTAL, MENU_EXIT, MENU_ITEMS,
        MENU_DFILT, MENU_AFC, MENU_GAIN, MENU_DEMOD, MENU_DAC }; /* legacy action IDs */
 #define MENU_VISIBLE_ROWS 9   /* the list scrolls when it has more items */
@@ -68,6 +71,7 @@ typedef struct {
     /* Output level. */
     unsigned output;                /* transport_output() index */
     const char *output_name;        /* "1.5x" */
+    unsigned dac_bits;              /* LCD build: 5 or 6 (MENU_DAC_BITS) */
     /* Gain. */
     const char *gain_mode;          /* "AUTO", "MAX", "G42" */
     const char *demod;              /* selected decoder, short: "P64", "U85Q" */

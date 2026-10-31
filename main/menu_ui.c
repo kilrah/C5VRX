@@ -156,7 +156,11 @@ static int badge(const char *s, int x, int y, uint8_t fill, uint8_t ink)
 /* ---- settings list ---- */
 
 static const char *const s_items[MENU_ITEMS] = {
-    "BAND", "CHANNEL", "SCAN", "VIDEO", "FILTER", "OUTPUT", "CALIBRATE", "EXPERIMENTAL", "EXIT",
+    "BAND", "CHANNEL", "SCAN", "VIDEO", "FILTER", "OUTPUT",
+#ifdef C5VRX_LCD
+    "DAC",
+#endif
+    "CALIBRATE", "EXPERIMENTAL", "EXIT",
 };
 
 /* "14.4M" (MHz; the FILTER card spells it out), or "--" while the active
@@ -200,6 +204,12 @@ static void row_value(const menu_view_t *v, int item, const char **value, const 
     case MENU_EXPERIMENTAL: if (v->exp_active) *value = "EXP"; break;
     case MENU_CALIBRATE: if (v->dc_cal) *value = "DC!"; break;
     case MENU_OUTPUT: *value = v->output_name; break;
+#ifdef C5VRX_LCD
+    case MENU_DAC_BITS:
+        *value = v->dac_bits == 6u ? "6 BIT" : "5 BIT";
+        *note = v->dac_bits == 6u ? "USB OFF" : NULL;
+        break;
+#endif
     case MENU_GAIN: *value = v->gain_mode; break;
     case MENU_DEMOD: *value = v->demod; break;
     default: break;
@@ -409,6 +419,9 @@ static const char *hold_action(const menu_view_t *v)
     case MENU_BAND: case MENU_CHANNEL: case MENU_FILTER: case MENU_DFILT: case MENU_OUTPUT: case MENU_GAIN: case MENU_DEMOD: return "NEXT";
     case MENU_SCAN: return v->scan_active ? NULL : "SCAN";
     case MENU_VIDEO: case MENU_AFC: return "CHANGE";
+#ifdef C5VRX_LCD
+    case MENU_DAC_BITS: return "CHANGE";
+#endif
     case MENU_CALIBRATE: case MENU_EXPERIMENTAL: return "OPEN";
     case MENU_DAC: return "STEP";
     default: return "EXIT";
