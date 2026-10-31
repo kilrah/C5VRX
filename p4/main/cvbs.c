@@ -409,6 +409,22 @@ static IRAM_ATTR void publish_frame(void)
     ++s_cnt.frames;
 }
 
+/* A field ended; frame_end: the parity says the frame is complete. An
+ * interlaced frame goes out only with both its fields in it: after two
+ * fields of one parity in a row (the source skips half a line about once in
+ * 16-32 fields, board 2026-10-31) the next frame held one fresh field and
+ * the other's rows from three frames back, and the picture's bottom jumped.
+ * Such a frame takes one more field instead (a repeated picture). */
+static int s_frame_fields;
+static IRAM_ATTR void field_end(bool frame_end)
+{
+    ++s_frame_fields;
+    if (frame_end && (s_same_parity >= 2 || s_frame_fields >= 2)) {
+        publish_frame();
+        s_frame_fields = 0;
+    }
+}
+
 /* ---- colour ----
  * Burst-referenced quadrature demodulation on the 20 MS/s codes, per line:
  * the burst and 64 windows across the active line (one per 8 pixels), each
@@ -790,7 +806,7 @@ static IRAM_ATTR void process_line(int64_t l, bool hsync_valid)
         s_bflog[(s_flog_n - 1) & 31] = s_hsync_field;
         s_black_field = 0;
         s_hsync_field = 0;
-        if (s_parity == 1 || parity == s_parity) publish_frame();
+        field_end(s_parity == 1 || parity == s_parity);
         /* Progressive with hysteresis: one field read with the other parity
          * (the C5 menu raster, about one in 25) must not switch modes, which
          * wrote that field interlaced and split the picture (board
@@ -807,7 +823,7 @@ static IRAM_ATTR void process_line(int64_t l, bool hsync_valid)
         /* No vertical sync where expected: coast a field at the same phase. */
         ++s_vs_missed;
         ++s_coasts;
-        if (s_parity == 1 || s_same_parity >= 2) publish_frame();
+        field_end(s_parity == 1 || s_same_parity >= 2);
         if (s_same_parity < 2) s_parity ^= 1;
         s_line_in_field -= field_lines;
         if (s_line_in_field > field_lines) s_line_in_field = 0;

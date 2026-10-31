@@ -16,6 +16,7 @@ typedef struct {
 
 void link_start(void);
 void link_status(c5_status_t *out);
+void link_debug_print(void);   /* TEMP */
 /* Channel table (band letter, MHz) once the C5 sent it; false until then. */
 bool link_channel(int idx, char *band, int *mhz);
 

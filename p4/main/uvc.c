@@ -2,10 +2,14 @@
  * P4's high-speed USB port (espressif/usb_device_uvc, MJPEG).
  *
  * The render task's PPA scales the picture into one of three 800x600 RGB565
- * buffers; the UVC task asks for a frame at its own pace (sdkconfig rate)
- * and the hardware encoder turns the newest one into a JPEG then.
- * Without a new picture the last JPEG goes again, so the host always sees
- * a steady stream. */
+ * buffers; an encoder task turns each into a JPEG at once (hardware
+ * encoder, three JPEG buffers), and the UVC task, at its own pace
+ * (sdkconfig rate), sends the newest JPEG. Without a new picture the last
+ * JPEG goes again, so the host always sees a steady stream.
+ *
+ * Encoding inside fb_get (with a wait for a new picture) made it serial with
+ * the transfer (~23 ms for 90 KB on 512-byte isochronous packets): 18 fps
+ * (host measured, 2026-10-31). */
 #include "uvc.h"
 #include <string.h>
 #include "board.h"
@@ -29,9 +33,13 @@ static jpeg_encoder_handle_t s_jpeg;
 static uint8_t *s_y[3];
 static int s_fill = -1, s_ready = -1, s_enc = -1;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-static uint8_t *s_jpeg_buf;
+static uint8_t *s_jpeg_buf[3];
 static size_t s_jpeg_cap;
-static uint32_t s_jpeg_len;
+static uint32_t s_jpeg_len[3];
+static int s_jlatest = -1, s_jbusy = -1;   /* newest JPEG; one the UVC task copies */
+static TaskHandle_t s_enc_task;
+static volatile uint32_t s_jpeg_us;
+uint32_t uvc_jpeg_us(void) { return s_jpeg_us; }
 static uvc_fb_t s_fb;
 static volatile bool s_streaming;
 static uint32_t s_sent, s_fps;
@@ -44,22 +52,35 @@ uint8_t *uvc_frame_begin(void)
 {
     if (!s_streaming) return NULL;
     portENTER_CRITICAL(&s_lock);
-    s_fill = -1;
+    if (s_fill >= 0) {   /* the last one still being scaled */
+        portEXIT_CRITICAL(&s_lock);
+        return NULL;
+    }
     for (int k = 0; k < 3; ++k)
         if (k != s_ready && k != s_enc) { s_fill = k; break; }
     portEXIT_CRITICAL(&s_lock);
     return s_fill >= 0 ? s_y[s_fill] : NULL;
 }
 
-void uvc_frame_end(void)
+void uvc_frame_abort(void)
 {
     portENTER_CRITICAL(&s_lock);
-    s_ready = s_fill;
     s_fill = -1;
     portEXIT_CRITICAL(&s_lock);
 }
 
-static bool encode(const uint8_t *y)
+bool uvc_frame_end_isr(void)
+{
+    portENTER_CRITICAL_ISR(&s_lock);
+    s_ready = s_fill;
+    s_fill = -1;
+    portEXIT_CRITICAL_ISR(&s_lock);
+    BaseType_t woken = pdFALSE;
+    if (s_enc_task) vTaskNotifyGiveFromISR(s_enc_task, &woken);
+    return woken == pdTRUE;
+}
+
+static bool encode(const uint8_t *y, int j)
 {
     const jpeg_encode_cfg_t cfg = {
         .width = UVC_W,
@@ -69,35 +90,47 @@ static bool encode(const uint8_t *y)
         .image_quality = JPEG_QUALITY,
     };
     uint32_t len = 0;   /* the PPA wrote y by DMA: nothing in the cache to write back */
-    const esp_err_t err = jpeg_encoder_process(s_jpeg, &cfg, y, UVC_FRAME_BYTES, s_jpeg_buf, s_jpeg_cap, &len);
+    const esp_err_t err = jpeg_encoder_process(s_jpeg, &cfg, y, UVC_FRAME_BYTES, s_jpeg_buf[j], s_jpeg_cap, &len);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "encode: %s", esp_err_to_name(err));
         return false;
     }
-    s_jpeg_len = len;
+    s_jpeg_len[j] = len;
     return true;
+}
+
+static void enc_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        int j = -1;
+        portENTER_CRITICAL(&s_lock);
+        if (s_ready >= 0) { s_enc = s_ready; s_ready = -1; }
+        for (int k = 0; k < 3; ++k)
+            if (k != s_jlatest && k != s_jbusy) { j = k; break; }
+        portEXIT_CRITICAL(&s_lock);
+        if (s_enc < 0) continue;
+        const int64_t t0 = esp_timer_get_time();
+        const bool ok = encode(s_y[s_enc], j);
+        s_jpeg_us = (uint32_t)(esp_timer_get_time() - t0);
+        portENTER_CRITICAL(&s_lock);
+        s_enc = -1;
+        if (ok) s_jlatest = j;
+        portEXIT_CRITICAL(&s_lock);
+    }
 }
 
 static uvc_fb_t *fb_get(void *ctx)
 {
     (void)ctx;
-    /* Wait a little for a new picture, else repeat the last one. */
-    for (int k = 0; k < 20; ++k) {
-        portENTER_CRITICAL(&s_lock);
-        if (s_ready >= 0) { s_enc = s_ready; s_ready = -1; }
-        portEXIT_CRITICAL(&s_lock);
-        if (s_enc >= 0) break;
-        vTaskDelay(pdMS_TO_TICKS(2));
-    }
-    if (s_enc >= 0) {
-        (void)encode(s_y[s_enc]);
-        portENTER_CRITICAL(&s_lock);
-        s_enc = -1;
-        portEXIT_CRITICAL(&s_lock);
-    }
+    portENTER_CRITICAL(&s_lock);
+    const int j = s_jlatest;
+    s_jbusy = j;
+    portEXIT_CRITICAL(&s_lock);
     const int64_t now = esp_timer_get_time();
-    s_fb.buf = s_jpeg_buf;
-    s_fb.len = s_jpeg_len;
+    s_fb.buf = s_jpeg_buf[j];
+    s_fb.len = s_jpeg_len[j];
     s_fb.width = UVC_W;
     s_fb.height = UVC_H;
     s_fb.format = UVC_FORMAT_JPEG;
@@ -108,7 +141,14 @@ static uvc_fb_t *fb_get(void *ctx)
     return &s_fb;
 }
 
-static void fb_return(uvc_fb_t *fb, void *ctx) { (void)fb; (void)ctx; }
+static void fb_return(uvc_fb_t *fb, void *ctx)
+{
+    (void)fb;
+    (void)ctx;
+    portENTER_CRITICAL(&s_lock);
+    s_jbusy = -1;
+    portEXIT_CRITICAL(&s_lock);
+}
 
 static esp_err_t on_start(uvc_format_t format, int width, int height, int rate, void *ctx)
 {
@@ -132,14 +172,16 @@ esp_err_t uvc_start(void)
     esp_err_t err = jpeg_new_encoder_engine(&ecfg, &s_jpeg);
     if (err != ESP_OK) return err;
     const jpeg_encode_memory_alloc_cfg_t mcfg = {.buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER};
-    s_jpeg_buf = jpeg_alloc_encoder_mem(JPEG_MAX, &mcfg, &s_jpeg_cap);
+    for (int k = 0; k < 3; ++k) s_jpeg_buf[k] = jpeg_alloc_encoder_mem(JPEG_MAX, &mcfg, &s_jpeg_cap);
     for (int k = 0; k < 3; ++k) s_y[k] = heap_caps_aligned_calloc(128, 1, UVC_FRAME_BYTES, MALLOC_CAP_SPIRAM);
     uint8_t *xfer = heap_caps_malloc(JPEG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_jpeg_buf || !s_y[0] || !s_y[1] || !s_y[2] || !xfer) return ESP_ERR_NO_MEM;
+    if (!s_jpeg_buf[0] || !s_jpeg_buf[1] || !s_jpeg_buf[2] || !s_y[0] || !s_y[1] || !s_y[2] || !xfer) return ESP_ERR_NO_MEM;
     /* A black picture until the first real one (written back: the encoder
      * reads memory). */
     (void)esp_cache_msync(s_y[0], UVC_FRAME_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    if (!encode(s_y[0])) return ESP_FAIL;
+    if (!encode(s_y[0], 0)) return ESP_FAIL;
+    s_jlatest = 0;
+    if (xTaskCreate(enc_task, "uvc_enc", 3072, NULL, 4, &s_enc_task) != pdPASS) return ESP_ERR_NO_MEM;
     uvc_device_config_t cfg = {
         .uvc_buffer = xfer,
         .uvc_buffer_size = JPEG_MAX,

@@ -104,7 +104,7 @@ static esp_lcd_panel_handle_t s_panel;
 static uint16_t *s_fb[2];
 static SemaphoreHandle_t s_refresh;
 static volatile uint32_t s_fps;
-static ppa_client_handle_t s_ppa;
+static ppa_client_handle_t s_ppa, s_ppa_uvc;
 static uint32_t s_ppa_errors;
 
 #define BL_LEDC_CH      LEDC_CHANNEL_0
@@ -211,6 +211,10 @@ void display_set_backlight(int percent)
 
 uint32_t display_fps(void) { return s_fps; }
 static volatile uint32_t s_draw_us;
+static volatile uint32_t s_panel_us, s_uvc_ppa_us;   /* the last pass of each */
+static int64_t s_uvc_t0;
+uint32_t display_panel_ppa_us(void) { return s_panel_us; }
+uint32_t display_uvc_ppa_us(void) { return s_uvc_ppa_us; }
 uint32_t display_draw_us(void) { return s_draw_us; }
 uint32_t display_ppa_errors(void) { return s_ppa_errors; }
 
@@ -225,7 +229,8 @@ uint32_t display_late_frames(uint32_t *max_us)
  * RGB565 and scales it by exact 1/16 steps: 25/16 across (800 columns),
  * NTSC 20/16 down (600 rows), PAL 17/16 down from the middle 564 lines (599
  * rows; YUV420 needs even blocks, 6 lines of overscan go). */
-static esp_err_t scale_frame(const cvbs_frame_t *f, void *out, uint32_t out_w, uint32_t out_h, size_t out_size)
+static esp_err_t scale_frame(const cvbs_frame_t *f, void *out, uint32_t out_w, uint32_t out_h, size_t out_size,
+                             ppa_client_handle_t client, ppa_trans_mode_t mode)
 {
     /* 576 PAL, 480 NTSC; a progressive field 288 / 240: 34/16 from the
      * middle 282 rows, 40/16 (600 rows). */
@@ -242,9 +247,9 @@ static esp_err_t scale_frame(const cvbs_frame_t *f, void *out, uint32_t out_w, u
         .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
         .scale_x = 25.0f / 16.0f,
         .scale_y = sy,
-        .mode = PPA_TRANS_MODE_BLOCKING,
+        .mode = mode,
     };
-    return ppa_do_scale_rotate_mirror(s_ppa, &c);
+    return ppa_do_scale_rotate_mirror(client, &c);
 }
 
 static size_t s_line = 64;   /* PSRAM cache line (L1/L2), from the heap's alignment */
@@ -271,6 +276,15 @@ void display_invalidate(uint16_t *fb, int y0, int y1, int x0, int x1)
  * spans the picture's last columns and the column's first (byte 1600 of a
  * row is not a line boundary for 128-byte lines), the CPU's copy goes: the
  * column's redraw would otherwise write stale picture bytes back. */
+static bool uvc_ppa_done(ppa_client_handle_t c, ppa_event_data_t *e, void *user)
+{
+    (void)c;
+    (void)e;
+    (void)user;
+    s_uvc_ppa_us = (uint32_t)(esp_timer_get_time() - s_uvc_t0);
+    return uvc_frame_end_isr();
+}
+
 static void draw_video(int fb_index, const cvbs_frame_t *f)
 {
     uint16_t *fb = s_fb[fb_index];
@@ -280,12 +294,37 @@ static void draw_video(int fb_index, const cvbs_frame_t *f)
         (void)esp_cache_msync(fb, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         return;
     }
-    if (scale_frame(f, fb, LCD_H_RES, LCD_V_RES, fb_bytes) != ESP_OK) ++s_ppa_errors;
+    const int64_t t0 = esp_timer_get_time();
+    if (scale_frame(f, fb, LCD_H_RES, LCD_V_RES, fb_bytes, s_ppa, PPA_TRANS_MODE_BLOCKING) != ESP_OK) ++s_ppa_errors;
+    s_panel_us = (uint32_t)(esp_timer_get_time() - t0);
     if ((VIDEO_W * 2) % s_line) display_invalidate(fb, 0, VIDEO_H, VIDEO_W - 1, VIDEO_W);
+    /* The UVC picture: the panel's video area copied by the PPA's blend
+     * engine, which runs beside the scale engine, while the CPU draws the
+     * column (it ends, uvc_ppa_done, long before this buffer is drawn
+     * again). A second scale pass for UVC took 18 ms on the same engine as
+     * the panel's 16-23: ~40 ms a picture, the panel fell to 21 fps and the
+     * picture flashed white (board 2026-10-31). The foreground is a
+     * don't-care read (A4, alpha fixed at 0): the output is the background. */
     uint8_t *uvc = uvc_frame_begin();
+    s_uvc_t0 = esp_timer_get_time();
     if (uvc) {
-        if (scale_frame(f, uvc, VIDEO_W, VIDEO_H, UVC_FRAME_BYTES) == ESP_OK) uvc_frame_end();
-        else ++s_ppa_errors;
+        const ppa_blend_oper_config_t b = {
+            .in_bg = {.buffer = fb, .pic_w = LCD_H_RES, .pic_h = LCD_V_RES, .block_w = VIDEO_W, .block_h = VIDEO_H,
+                      .blend_cm = PPA_BLEND_COLOR_MODE_RGB565},
+            .in_fg = {.buffer = fb, .pic_w = VIDEO_W, .pic_h = VIDEO_H, .block_w = VIDEO_W, .block_h = VIDEO_H,
+                      .blend_cm = PPA_BLEND_COLOR_MODE_A4},
+            .out = {.buffer = uvc, .buffer_size = UVC_FRAME_BYTES, .pic_w = VIDEO_W, .pic_h = VIDEO_H,
+                    .blend_cm = PPA_BLEND_COLOR_MODE_RGB565},
+            .bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE,
+            .bg_alpha_fix_val = 255,
+            .fg_alpha_update_mode = PPA_ALPHA_FIX_VALUE,
+            .fg_alpha_fix_val = 0,
+            .mode = PPA_TRANS_MODE_NON_BLOCKING,
+        };
+        if (ppa_do_blend(s_ppa_uvc, &b) != ESP_OK) {
+            uvc_frame_abort();
+            ++s_ppa_errors;
+        }
     }
 }
 
@@ -346,6 +385,11 @@ esp_err_t display_start(void)
     }
     const ppa_client_config_t pcfg = {.oper_type = PPA_OPERATION_SRM, .data_burst_length = P4_PPA_BURST};
     ESP_RETURN_ON_ERROR(ppa_register_client(&pcfg, &s_ppa), TAG, "PPA");
+    const ppa_client_config_t ucfg = {.oper_type = PPA_OPERATION_BLEND, .max_pending_trans_num = 1,
+                                      .data_burst_length = P4_PPA_BURST};
+    ESP_RETURN_ON_ERROR(ppa_register_client(&ucfg, &s_ppa_uvc), TAG, "PPA UVC");
+    const ppa_event_callbacks_t ucbs = {.on_trans_done = uvc_ppa_done};
+    ESP_RETURN_ON_ERROR(ppa_client_register_event_callbacks(s_ppa_uvc, &ucbs), TAG, "PPA UVC cb");
     for (int k = 0; k < 2; ++k) {
         memset(s_fb[k], 0, LCD_H_RES * LCD_V_RES * 2);
         (void)esp_cache_msync(s_fb[k], LCD_H_RES * LCD_V_RES * 2, ESP_CACHE_MSYNC_FLAG_DIR_C2M);

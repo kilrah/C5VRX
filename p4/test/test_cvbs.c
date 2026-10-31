@@ -123,7 +123,7 @@ static int run(bool pal, double noise, double clock_ppm, bool colour)
     g_colour = colour;
     memset(&s_cl, 0, sizeof(s_cl));
     memset(s_hist, 0, sizeof(s_hist));
-    s_hw = 0; s_search = 0; s_locked = false; s_line_in_field = 0; s_parity = 0; s_vs_missed = VS_REACQUIRE; s_seq = 0;
+    s_hw = 0; s_search = 0; s_locked = false; s_line_in_field = 0; s_parity = 0; s_vs_missed = VS_REACQUIRE; s_seq = 0; s_frame_fields = 0;
     s_period = pal ? PERIOD_PAL : PERIOD_NTSC; s_frame_pal = true; s_ready_idx = -1; s_held_idx = -1; s_w_idx = 0;
     memset(&s_cnt, 0, sizeof(s_cnt));
     for (int k = 0; k < 3; ++k) memset(s_frames[k], 0, CVBS_ROW_BYTES * CVBS_H_MAX);

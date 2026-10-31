@@ -50,6 +50,10 @@ void app_main(void)
                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
         cvbs_debug_print();
-        printf("RENDER fps=%lu draw_ms=%lu uvc_fps=%lu ppa_errors=%lu\n", (unsigned long)display_fps(), (unsigned long)display_draw_us() / 1000, (unsigned long)uvc_fps(), (unsigned long)display_ppa_errors());
+        link_debug_print();
+        printf("RENDER fps=%lu draw_ms=%lu uvc_fps=%lu ppa_errors=%lu panel_ppa_us=%lu uvc_ppa_us=%lu jpeg_us=%lu\n",
+               (unsigned long)display_fps(), (unsigned long)display_draw_us() / 1000, (unsigned long)uvc_fps(),
+               (unsigned long)display_ppa_errors(), (unsigned long)display_panel_ppa_us(),
+               (unsigned long)display_uvc_ppa_us(), (unsigned long)uvc_jpeg_us());
     }
 }

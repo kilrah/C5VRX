@@ -8,6 +8,8 @@ esp_err_t display_start(void);
 void display_set_backlight(int percent);
 /* Frames rendered to the panel per second (last second). */
 uint32_t display_fps(void);
+uint32_t display_panel_ppa_us(void);   /* the last panel / UVC PPA pass */
+uint32_t display_uvc_ppa_us(void);
 uint32_t display_draw_us(void);   /* the last picture's draw time */
 uint32_t display_ppa_errors(void);
 /* Panel frames that ended > 1 ms late (since boot), and the longest frame

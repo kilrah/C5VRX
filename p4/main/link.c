@@ -44,6 +44,20 @@ static void copy_str(char *dst, size_t n, const char *v)
     dst[n - 1] = 0;
 }
 
+/* TEMP: the C5's last status lines (lk afc cfo sig g cn vid) for the log. */
+static int s_hist_c5[16][7];
+static unsigned s_hist_n;
+
+void link_debug_print(void)
+{
+    printf("C5 lk/afc/cfo/sig/g/cn/vid:");
+    for (unsigned i = 0; i < 8; ++i) {
+        const int *h = s_hist_c5[(s_hist_n + 8 + i) & 15];
+        printf(" %d/%d/%d/%d/%d/%d/%d", h[0], h[1], h[2], h[3], h[4], h[5], h[6]);
+    }
+    printf("\n");
+}
+
 static void parse_status(char *s)
 {
     c5_status_t st = s_status;
@@ -77,6 +91,9 @@ static void parse_status(char *s)
         else if (!strcmp(k, "dc")) copy_str(st.dc, sizeof(st.dc), v);
     }
     ++st.seq;
+    int *h = s_hist_c5[s_hist_n++ & 15];
+    h[0] = st.afc_lock; h[1] = st.afc; h[2] = st.cfo_khz; h[3] = st.sig; h[4] = st.gain; h[5] = st.cn_x10;
+    h[6] = st.video;
     portENTER_CRITICAL(&s_lock);
     s_status = st;
     s_status_us = esp_timer_get_time();
