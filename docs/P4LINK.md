@@ -16,8 +16,11 @@ Status (2026-11-01, raw IQ): the C5 sends its raw ring (RAW) and the P4's
 BitScrambler runs U80P64-R1 on it; PAL locked at 50 fields/s with the same
 levels as the C5's own P64 (sync ~11, blanking ~21 codes), and live
 switches RAW -> P64 -> U85Q -> RAW each followed by the P4. The C5's
-sampling phase settled on the moved IQ pads. Picture comparison by eye,
-weak signal and NTSC are not checked yet.
+sampling phase settled on the moved IQ pads. RAW looks the same as the
+C5's P64 by eye (operator). NTSC (a second camera/VTX, B5, RAW): looks
+normal (operator); 60 fields / 30 frames/s, line 63.552 us, fields
+alternating 262/263 lines with 240 rows, colour on ~99 % of lines, a
+shallow sync (5.6 codes) locked. Weak signal and range are not checked.
 
 Status (2026-10-31, code bus, bench, one FireBeetle + one JC1060P470C, PAL
 VTX on B5): the UART link, status column and touch controls work; the P4 shows a
@@ -367,8 +370,7 @@ Board checks, in order:
    levels with each OUTPUT setting, both standards, the C5 menu raster.
 4. UVC on the high-speed port with a host (Windows/macOS/Linux).
 
-Raw IQ, next: compare RAW and C5-P64 pictures by eye and at weak signal;
-NTSC; then P4-side demodulators (other BitScrambler programs, PIE after
+Raw IQ, next: weak signal and range; then P4-side demodulators (other BitScrambler programs, PIE after
 them). The C5's `heap_min` with RAW is 7956 B (9.8 KB with the code bus;
 2026-11-01): the menu still opens, but watch it.
 
