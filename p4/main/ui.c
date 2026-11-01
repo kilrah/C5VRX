@@ -242,7 +242,8 @@ static void rows_for(const c5_status_t *st, row_t r[ROWS])
         strcpy(r[5].label, s_set[S_EDGE].value ? "CLK FALL" : "CLK RISE");
         strcpy(r[5].value, s_set[S_SWAP].value ? "FIELDS SWAP" : "FIELDS STD");
         r[6] = (row_t){.kind = ROW_PAIR, .value = "< BACK"};
-        snprintf(r[6].label, sizeof(r[6].label), "%s", st->online ? st->demod : "--");
+        /* The C5's decoder (m cycles P64, U85Q, RAW); RAW: the P4 runs P64. */
+        snprintf(r[6].label, sizeof(r[6].label), "%s", !st->online ? "--" : !strcmp(st->demod, "RAW") ? "P4 P64" : st->demod);
     }
 }
 
@@ -407,7 +408,7 @@ static void press(int x, int y, bool repeat)
             break;
         case 4: link_key(left ? 'F' : 'B'); break;
         case 5: change(left ? S_EDGE : S_SWAP, 1); break;
-        case 6: if (left) link_key('m'); else { s_page = PAGE_RX; ++s_version; } break;   /* decoder P64 <-> U85Q */
+        case 6: if (left) link_key('m'); else { s_page = PAGE_RX; ++s_version; } break;   /* decoder P64 -> U85Q -> RAW */
         default: break;
         }
     }

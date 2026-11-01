@@ -65,7 +65,18 @@ uint32_t transport_switch_wait_ms(void);
 const char *transport_program_name(void);
 /* Decoder (transport.c): U80P64-R1 (default) or U85Q, each a fixed program
  * with its own LUT; kept in NVS "demod" (main.c, console m). */
+#ifdef C5VRX_P4LINK
+/* P4-link build (docs/P4LINK.md): RAW (the default) sends the raw ring,
+ * Q4/I4 at 40 MS/s, and the P4 demodulates; P64/U85Q stay for A/B. Its own
+ * NVS key, so a saved XIAO-style choice does not override RAW. */
+enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMOD_RAW, TRANSPORT_DEMODS };
+#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_RAW
+#define DEMOD_NVS_KEY "p4demod"
+#else
 enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMODS };
+#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_P64
+#define DEMOD_NVS_KEY "demod"
+#endif
 uint8_t transport_demod(void);
 const char *transport_demod_name(uint8_t d);
 bool transport_set_demod(uint8_t d);

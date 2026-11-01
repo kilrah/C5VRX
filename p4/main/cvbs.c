@@ -1,10 +1,12 @@
 /* C5VRX P4 display by Twotoz and the C5VRX contributors: capture and
  * composite decode of the C5's DAC codes (docs/P4LINK.md).
  *
- * Bus: the C5's PARLIO TX sends its U80P64-R1 (or U85Q) output, six-bit
- * codes at 40 MHz with every code twice ([D,D], unique CVBS at 20 MS/s), and
- * its clock. PARLIO RX here samples it on that clock into a ring in internal
- * RAM.
+ * Bus: the C5's PARLIO TX sends, with its clock, either its U80P64-R1 (or
+ * U85Q) output, six-bit codes at 40 MHz with every code twice ([D,D], unique
+ * CVBS at 20 MS/s), or (decoder RAW) its raw ring, Q4/I4 at 40 MS/s, which
+ * this P4's BitScrambler decodes to the same [D,D] codes on the way in (see
+ * "Raw IQ" below). PARLIO RX here samples it on that clock into a ring in
+ * internal RAM.
  *
  * The continuous receive follows zerowidth's p4usb decoder (fork
  * zerowidth/C5VRX, branch p4usb, commit 3dfac08, p4usb/main/decode.c): whole
@@ -31,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "board.h"
+#include "driver/bitscrambler.h"
 #include "driver/gpio.h"
 #include "driver/parlio_rx.h"
 #include "esp_cache.h"
@@ -42,6 +45,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal/dma_types.h"
+#include "link.h"
 #include "soc/axi_dma_struct.h"
 #include "soc/gdma_channel.h"
 
@@ -68,6 +72,23 @@ static int64_t s_rd_us;
 static size_t s_cache_align = 64;
 static TaskHandle_t s_task;        /* decode task */
 static volatile bool s_edge_neg, s_restart;
+
+/* Raw IQ (the C5's decoder RAW): the bus carries the C5's ring bytes, Q4/I4
+ * at 40 MS/s, and the P4's BitScrambler runs U80P64-R1 between PARLIO RX and
+ * its DMA (p64_rx.bsasm, a copy of the C5's main/p64.bsasm), so the ring
+ * holds the same [D,D] codes as with the C5's own decoder and nothing after
+ * it changes. p4usb (zerowidth/C5VRX 3dfac08, p4usb/main/decode.c) showed a
+ * BitScrambler in this receive path on the P4. Its output keeps the input's
+ * bits 6..7 (I's high bits): a C5 menu raster (codes 0..63) through the
+ * decoder has none, so the menu switches back to codes in a few ms; the
+ * C5's status (dem=RAW) decides the rest. */
+BITSCRAMBLER_PROGRAM(s_p64_rx, "p64_rx");
+static bitscrambler_handle_t s_bs;
+static bool s_iq;                    /* the running capture decodes raw IQ */
+static volatile bool s_iq_want;
+static uint32_t s_act_n, s_act_hits, s_act_permille, s_mode_votes, s_mode_switches, s_bs_errors;
+static uint32_t s_stall_restarts;
+static int64_t s_begin_us;
 
 /* ---- decode, 10 MS/s ---- */
 #define FS_HZ           10000000
@@ -227,8 +248,37 @@ static void mute_rom_log(bool mute)
     else esp_rom_install_uart_printf();
 }
 
+static void bs_end(void)
+{
+    if (!s_bs) return;
+    (void)bitscrambler_disable(s_bs);
+    bitscrambler_free(s_bs);
+    s_bs = NULL;
+}
+
+/* Raw IQ: the decoder between PARLIO RX and the DMA, before the RX starts
+ * (as p4usb's start_bs). A failure falls back to the code bus. */
+static void bs_begin(void)
+{
+    if (!s_iq) return;
+    const bitscrambler_config_t cfg = {.dir = BITSCRAMBLER_DIR_RX, .attach_to = SOC_BITSCRAMBLER_ATTACH_PARL_IO};
+    esp_err_t err = bitscrambler_new(&cfg, &s_bs);
+    if (err == ESP_OK) err = bitscrambler_enable(s_bs);
+    if (err == ESP_OK) err = bitscrambler_load_program(s_bs, s_p64_rx);
+    if (err == ESP_OK) err = bitscrambler_reset(s_bs);
+    if (err == ESP_OK) err = bitscrambler_start(s_bs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "BitScrambler: %s, raw IQ off", esp_err_to_name(err));
+        ++s_bs_errors;
+        if (s_bs) bitscrambler_free(s_bs);
+        s_bs = NULL;
+        s_iq = false;
+    }
+}
+
 static esp_err_t rx_begin(void)
 {
+    bs_begin();
     const parlio_rx_soft_delimiter_config_t dcfg = {
         .sample_edge = s_edge_neg ? PARLIO_SAMPLE_EDGE_NEG : PARLIO_SAMPLE_EDGE_POS,
         .bit_pack_order = PARLIO_BIT_PACK_ORDER_LSB,
@@ -264,6 +314,7 @@ static void rx_end(void)
     (void)parlio_rx_unit_disable(s_rx);
     (void)parlio_del_rx_delimiter(s_delim);
     s_delim = NULL;
+    bs_end();
 }
 
 static esp_err_t rx_create(void)
@@ -780,10 +831,14 @@ static IRAM_ATTR void process_line(int64_t l, bool hsync_valid)
      * fields in a row went without one there. A dark stretch or a dropout
      * read as broad pulses mid-picture had restarted the field early, and
      * the next field's lines overwrote the top of the frame: the top third
-     * blinked (board 2026-10-31). As zerowidth's p4usb decoder does. */
+     * blinked (board 2026-10-31). As zerowidth's p4usb decoder does.
+     * Reacquiring, any line counts: the old "after line 100" guard never
+     * let a vsync that fell in a field's first 100 lines through, and after
+     * a restart (C5 menu on/off) the C5's progressive menu stayed shifted
+     * for good and video crawled half a line a field (board 2026-11-01). */
     const int field_lines = s_frame_pal ? 312 : 262;
     const bool vs_window = s_line_in_field >= field_lines - VS_WINDOW && s_line_in_field <= field_lines + 1 + VS_WINDOW;
-    if (low * 4 > period * 35 / 100 && s_line_in_field > 100 && (vs_window || s_vs_missed >= VS_REACQUIRE)) {
+    if (low * 4 > period * 35 / 100 && (vs_window || s_vs_missed >= VS_REACQUIRE)) {
         s_vs_missed = 0;
         int parity = first > period * 3 / 10 && first < period * 7 / 10;
         /* Seen a line late: the previous line high in its first half and low
@@ -892,6 +947,7 @@ static IRAM_ATTR void decode_lines(void)
         } else if (++s_miss > MISS_UNLOCK) {
             s_locked = false;
             s_search = exp;
+            s_vs_missed = VS_REACQUIRE;   /* the line count is stale */
             continue;
         }
         process_line(l, ok);
@@ -973,6 +1029,9 @@ static IRAM_ATTR bool fill_history(void)
          * new bytes loses nothing. */
         const uint32_t al = (uint32_t)s_cache_align, lo = s_rd / al * al, hi = (s_rd + n + al - 1u) / al * al;
         (void)esp_cache_msync(s_ring + lo, (hi < RING_BYTES ? hi : RING_BYTES) - lo, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        /* Bits 6..7 on one byte in 64, alternately even and odd: about
+         * 50-75 % set for live IQ, none for six-bit codes (mode_vote). */
+        for (uint32_t k = (s_act_n & 1u); k < n; k += 64u) { s_act_hits += (s_ring[s_rd + k] & 0xC0u) != 0; ++s_act_n; }
         /* 64 ring bytes -> 32 codes (raw) and 16 sums (history) a step, in
          * PIE (fill.S). n and s_rd are multiples of 64 (4032-byte nodes are
          * 63 groups), so s_hw stays a multiple of 16, both histories' writes
@@ -995,14 +1054,48 @@ static IRAM_ATTR bool fill_history(void)
     return more;
 }
 
+/* Every 256 sampled bytes (16 KB, 0.4 ms): raw IQ wanted while the C5
+ * says RAW and the bus (after the decoder, in raw mode) shows I's high bits
+ * on at least 1/8 of the bytes; codes otherwise. Four votes in a row (eight
+ * towards raw) restart the capture in the other mode; with the link down
+ * raw stays only while it looks live. */
+static void mode_vote(void)
+{
+    if (s_act_n < 256u) return;
+    s_act_permille = s_act_hits * 1000u / s_act_n;
+    const bool active = s_act_hits * 8u >= s_act_n;
+    s_act_n = s_act_hits = 0;
+    const int dem = link_raw_iq();
+    const bool want = s_bs_errors < 3u && (dem > 0 ? active : dem < 0 && s_iq && active);
+    if (want == s_iq) { s_mode_votes = 0; return; }
+    if (++s_mode_votes < (want ? 8u : 4u)) return;
+    s_mode_votes = 0;
+    s_iq_want = want;
+    s_restart = true;
+}
+
 /* Core 0: ring -> history. Woken by the receive's node interrupts. */
 static void fill_task(void *arg)
 {
     (void)arg;
     for (;;) {
         (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
+        mode_vote();
+        /* No data for 0.5 s: restart the receive. A missing bus clock (C5
+         * restart, menu) looks the same and a restart costs nothing then;
+         * a receive that stopped after its first node (seen at boot,
+         * 2026-11-01, with the C5 sending) only recovers this way. */
+        const int64_t now = esp_timer_get_time();
+        if (!s_restart && now - s_last_data_us > 500000 && now - s_begin_us > 500000) {
+            ++s_stall_restarts;
+            s_restart = true;
+        }
         if (s_restart) {
             s_restart = false;
+            if (s_iq_want != s_iq) ++s_mode_switches;
+            rx_end();
+            s_iq = s_iq_want;
+            s_begin_us = esp_timer_get_time();
             rx_end();
             esp_err_t err = rx_begin();
             ++s_restarts;
@@ -1029,6 +1122,7 @@ static void decode_task(void *arg)
             s_resync = false;
             s_locked = false;
             s_search = hw_get();
+            s_vs_missed = VS_REACQUIRE;   /* data lost or restarted: the next vsync wherever it is */
         }
         const int64_t t0 = esp_timer_get_time();
         decode_lines();
@@ -1057,6 +1151,7 @@ esp_err_t cvbs_start(void)
     s_fill_pie = fill_selftest();
     esp_err_t err = rx_create();
     if (err == ESP_OK) err = rx_begin();
+    s_begin_us = esp_timer_get_time();
     if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "capture on %u MHz bus clock, DMA channel %d", (unsigned)(LINK_CLK_HZ / 1000000), s_dma_ch);
     if (xTaskCreatePinnedToCore(decode_task, "cvbs", 6144, NULL, configMAX_PRIORITIES - 2, &s_task, 1) != pdPASS)
@@ -1108,6 +1203,7 @@ void cvbs_get_stats(cvbs_stats_t *s)
     s->sync_level = s_sync;
     s->blank_level = s_blank;
     s->clock = esp_timer_get_time() - s_last_data_us < 100000;
+    s->raw_iq = s_iq;
 }
 
 void cvbs_set_picture(int contrast_pct, int brightness)
@@ -1141,19 +1237,22 @@ void cvbs_debug_print(void)
     char h[96];
     int n = 0;
     for (int k = 0; k < 16; ++k) n += snprintf(h + n, sizeof(h) - (size_t)n, "%s%u", k ? "," : "", hist[k] * 100u / 4096u);
-    static const int pins[LINK_DATA_BITS + 1] = {LINK_CLK_GPIO, 2, 3, 4, 32, 33, 47};
-    char act[96];
+    static const int data[LINK_DATA_BITS] = LINK_DATA_GPIOS;
+    char act[128];
     n = 0;
     for (int p = 0; p < LINK_DATA_BITS + 1; ++p) {
-        int changes = 0, prev = gpio_get_level(pins[p]);
+        const int pin = p ? data[p - 1] : LINK_CLK_GPIO;
+        int changes = 0, prev = gpio_get_level(pin);
         for (int k = 0; k < 500; ++k) {
-            const int v = gpio_get_level(pins[p]);
+            const int v = gpio_get_level(pin);
             changes += v != prev;
             prev = v;
         }
-        n += snprintf(act + n, sizeof(act) - (size_t)n, "%sg%d:%d", p ? "," : "", pins[p], changes);
+        n += snprintf(act + n, sizeof(act) - (size_t)n, "%sg%d:%d", p ? "," : "", pin, changes);
     }
-    printf("FILL pie=%d\n", s_fill_pie);
+    printf("FILL pie=%d bus=%s c5dem=%d act=%lu%% switches=%lu bs_errors=%lu stall_restarts=%lu\n", s_fill_pie,
+           s_iq ? "raw-iq" : "codes", link_raw_iq(), (unsigned long)(s_act_permille / 10), (unsigned long)s_mode_switches,
+           (unsigned long)s_bs_errors, (unsigned long)s_stall_restarts);
     printf("FLOG lines/rows/hsyncs:");
     for (int i = 0; i < 32; ++i) {
         const uint32_t v = s_flog[(s_flog_n + i) & 31];

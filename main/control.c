@@ -147,7 +147,7 @@ static void demod_next(void)
 {
     const uint8_t next = (uint8_t)((transport_demod() + 1u) % TRANSPORT_DEMODS);
     const bool ok = transport_set_demod(next);
-    if (ok) (void)blob_store("demod", &next, sizeof(next));
+    if (ok) (void)blob_store(DEMOD_NVS_KEY, &next, sizeof(next));
     printf("DEMOD switch to=%s result=%s active=%s%s\n", transport_demod_name(next), ok ? "ok" : "refused",
            transport_program_name(), ok ? "" : " (guard, fault or rollback: T TRANSPORT and DEMOD)");
 }
@@ -332,8 +332,8 @@ static void menu_action(void)
             receiver_set_gain_mode(GAIN_MODE_DEFAULT, true);
             if (!phy_dfilt_select(PHY_DFILT_MODE_DEFAULT)) s_exp_failed = true;
             if (!s_afc_enabled) toggle_afc();
-            if (!transport_set_demod(TRANSPORT_DEMOD_P64)) s_exp_failed = true;
-            else { const uint8_t d = TRANSPORT_DEMOD_P64; (void)blob_store("demod", &d, 1); }
+            if (!transport_set_demod(TRANSPORT_DEMOD_DEFAULT)) s_exp_failed = true;
+            else { const uint8_t d = TRANSPORT_DEMOD_DEFAULT; (void)blob_store(DEMOD_NVS_KEY, &d, 1); }
             prefs_save();
         }
         else if (k == EXP_DAC) menu_dac_step();
@@ -487,7 +487,11 @@ static void control_task(void *arg)
             btn = 0; long_fired = false; menu_idle = 0; continue;
         }
         if (boot_grace) { --boot_grace; btn = 0; long_fired = false; }
+#ifdef C5VRX_P4LINK
+        else if (false) {   /* BOOT (GPIO28) carries an IQ lane (rf.h); the P4 has the controls */
+#else
         else if (gpio_get_level(BOOT_BUTTON) == 0) {
+#endif
             ++btn;
             menu_idle = 0;
             if (btn >= LONG_TICKS && !long_fired) {
@@ -667,6 +671,7 @@ static void control_task(void *arg)
 
 void control_start(void)
 {
+#ifndef C5VRX_P4LINK   /* GPIO28 is an IQ lane there (rf.h): never reconfigure it */
     const gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << BOOT_BUTTON,
         .mode = GPIO_MODE_INPUT,
@@ -674,6 +679,7 @@ void control_start(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
+#endif
     if (!blob_load("last_std", &s_last_std, 1)) s_last_std = 0xFF;
     uint8_t afc_off = 0;
     if (blob_load("afc_off", &afc_off, 1)) s_afc_enabled = !afc_off;

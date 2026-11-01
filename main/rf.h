@@ -19,13 +19,14 @@
  * These are GPIO-matrix loopbacks; no external IQ wiring is required. */
 #ifdef C5VRX_P4LINK
 /* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): the loopback
- * uses pads the link and the IO board wiring leave alone: the GDI display
- * connector's SPI/I2C/control lines (no display fitted) and IO1. The LSBs
- * take the two loaded pads: IO1 (battery divider) and GPIO27 (GDI LCD_CS).
- * Q = 1/9/10/23, I = 27/24/25/26. GPIO26/27 are on the IO board: leave them
- * unconnected. Not GPIO0 (3V3_C switch), 13/14 (USB), 15 (LED), 28 (BOOT).
- * Sampling-phase margin on these pads still needs board validation. */
-#define RF_IQ_GPIO_NUMS {1, 9, 10, 23, 27, 24, 25, 26}
+ * uses the pads the link (GPIO2..8, 11/12, 26/27), USB (13/14) and GPIO0
+ * (3V3_C switch) leave: the GDI display connector's SPI/I2C/control lines
+ * (no display fitted), IO1, the LED and BOOT. Q = 1/9/10/23,
+ * I = 15/28/24/25: the LSBs and I1 take the loaded pads (IO1: battery
+ * divider; GPIO15: the LED; GPIO28: the BOOT button, unused in this build),
+ * the sign bits clean ones. Sampling-phase margin on IO1/15/28 still needs
+ * board validation (console T SPHASE). */
+#define RF_IQ_GPIO_NUMS {1, 9, 10, 23, 15, 28, 24, 25}
 #else
 #define RF_IQ_GPIO_NUMS {1, 0, 25, 2, 27, 5, 3, 4}
 #endif

@@ -1,7 +1,9 @@
 idf_component_register(SRCS "main.c" "cvbs.c" "corr.S" "luma.S" "fill.S" "display.c" "link.c" "ui.c" "uvc.c"
                        PRIV_INCLUDE_DIRS "."
                        PRIV_REQUIRES esp_driver_parlio esp_driver_uart esp_driver_ledc esp_driver_i2c esp_driver_jpeg esp_driver_ppa
-                                     esp_driver_gpio esp_lcd esp_mm esp_timer esp_hw_support nvs_flash)
+                                     esp_driver_gpio esp_driver_bitscrambler esp_lcd esp_mm esp_timer esp_hw_support nvs_flash)
+# Raw IQ: the C5's U80P64-R1 in the P4's PARLIO RX path (cvbs.c).
+target_bitscrambler_add_src("p64_rx.bsasm")
 # The per-sample loops of the decoder need real optimisation whatever the
 # project level.
 set_source_files_properties(cvbs.c display.c PROPERTIES COMPILE_OPTIONS "-O2")

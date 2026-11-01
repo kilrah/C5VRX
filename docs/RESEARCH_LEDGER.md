@@ -677,6 +677,39 @@ the P4 and fits the P4 board's nine free header pins. Evidence: both
 firmwares build; a host test of the P4 decoder on synthetic PAL/NTSC
 (`p4/test/test_cvbs.c`). Not measured: anything on hardware (link
 integrity at 40 MHz, the moved IQ pads' sampling phase, picture, UVC).
+(Board results of 2026-10-31 are in [P4LINK.md](P4LINK.md).)
+
+### Raw IQ to the P4, demodulated by the P4's BitScrambler (2026-11-01)
+
+With two more wires (C5 GPIO26/27 to P4 GPIO46/45; the UART moved to P4
+GPIO37/38) the bus carries all eight TX bits, and the C5's decoder RAW
+(P4-link build only, its default) sends the raw ring. Source/tap on the C5:
+unchanged MODEM_DIAG Q4/I4 ultrafine, 40 MS/s -> PARLIO RX -> raw 32 KiB
+ring -> TX BitScrambler pass-through (`main/raw.bsasm`, no lookup) ->
+PARLIO TX 40 MHz, eight bits plus clock; the C5's control loop (gain, AFC,
+DC servo, picture measure with the P64 table) still runs on its own ring.
+The IQ loopback moved to Q = 1/9/10/23, I = 15/28/24/25 (LED and BOOT pads;
+the BOOT button is unused in this build). On the P4: PARLIO RX on the
+external clock, 8-bit, its BitScrambler in the receive path running a copy
+of U80P64-R1 (`p4/main/p64_rx.bsasm`: two lookups a pair, unique CVBS20 as
+[D,D] in the ring, EOF from upstream, I's two high bits passed in the spare
+output bits), then the existing decoder unchanged. Ownership: no CPU in the
+40 MS/s path on either chip. The P4 switches between raw and code bus by
+the C5's status (`dem=RAW`) and, for the C5 menu raster, by the passed-
+through bits (no I high bits = six-bit codes). A scalar CPU demodulator was
+not attempted: the plain-C ring fill alone took 55 % of a 360 MHz core
+(2026-10-31), so a per-pair LUT recursion at 20 M pairs/s does not fit;
+zerowidth's `p4usb` (3dfac08) already used the P4 BitScrambler in this
+receive path (a phase lookup) with PIE afterwards. This extends that route
+and the 2026-10-31 code route above. Evidence (board, 2026-11-01, PAL VTX
+on B5, bench distance): RAW and C5-P64 both locked PAL at 50 fields/s,
+same levels (sync ~11, blanking ~21 codes); live switches RAW -> P64 ->
+U85Q -> RAW each followed by the P4 within a restart; C5 SPHASE settled
+(excess 89 mc2, limit 300) on the moved pads. Not measured: picture
+equivalence beyond these counters, weak signal/range, NTSC. What it
+enables: P4-side demodulators (BitScrambler programs, possibly with more
+cycles per pair than the C5's TX40 path: unmeasured; PIE after them)
+without touching the C5.
 
 ## Removed sync flywheel (PR #212/#218 history, removed 2026-10-25)
 

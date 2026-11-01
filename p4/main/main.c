@@ -1,6 +1,6 @@
 /* C5VRX P4 display by Twotoz and the C5VRX contributors: ESP32-P4 picture,
- * touch settings and USB webcam for the C5VRX receiver on a Waveshare
- * ESP32-C5-LCD-1.47 (docs/P4LINK.md).
+ * touch settings and USB webcam for the C5VRX receiver on a FireBeetle 2
+ * ESP32-C5 (docs/P4LINK.md).
  * https://github.com/Twotoz/C5VRX - https://twotoz.github.io/C5VRX/ */
 #include "board.h"
 #include "cvbs.h"

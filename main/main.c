@@ -84,7 +84,7 @@ void app_main(void)
                    phy_dfilt_mode());
         }
         uint8_t demod;   /* the decoder of the last session (console m, NVS "demod"); set before the first start */
-        if (blob_load("demod", &demod, sizeof(demod)) && demod < TRANSPORT_DEMODS && transport_set_demod(demod))
+        if (blob_load(DEMOD_NVS_KEY, &demod, sizeof(demod)) && demod < TRANSPORT_DEMODS && transport_set_demod(demod))
             printf("PREFS restored demod=%s\n", transport_demod_name(demod));
     }
     s_boot_stage = "transport";

@@ -11,6 +11,7 @@
 int64_t g_fake_time;
 axi_dma_dev_t AXI_DMA;
 #include "cvbs.c"
+int link_raw_iq(void) { return 0; }   /* the C5 decodes: the code bus */
 
 enum { HN, HEQ, HBR, HBL, HVID };   /* half-line kinds: none(blank), eq, broad, blank no pulse, video */
 static bool g_pal;
@@ -118,6 +119,7 @@ static uint8_t level(int64_t n, double noise_amp, unsigned *rng)
     return (uint8_t)(c < 0 ? 0 : c > 63 ? 63 : c);
 }
 
+static int g_start_line;   /* where the stream starts, in source lines (the first vsync's position) */
 static int run(bool pal, double noise, double clock_ppm, bool colour)
 {
     g_colour = colour;
@@ -131,7 +133,7 @@ static int run(bool pal, double noise, double clock_ppm, bool colour)
     g_H = (pal ? 1280.0 : 1271.1111) * (1.0 + clock_ppm * 1e-6);
     unsigned rng = 1;
     const int64_t total = (int64_t)(g_H * g_lines * 6);   /* six frames */
-    int64_t n = 12345;   /* start mid-frame; 20 MS/s codes, summed in pairs as fill_history() */
+    int64_t n = 12345 + (int64_t)(g_start_line * g_H);   /* start mid-frame; 20 MS/s codes, summed in pairs as fill_history() */
     while (n < total) {
         const int64_t need = (s_locked ? (s_next >> 16) : s_search) - 32;
         int64_t room = HIST - (s_hw - need) - 32;
@@ -216,6 +218,15 @@ int main(void)
     fail |= run(true, 0, 0, false);
     s_sync = 25.0f; s_blank = 31.0f; set_slice(); build_lut();
     fail |= run(false, 6, 0, false);
+    /* After a restart (C5 menu, capture mode switch) the stream's first
+     * vsync came within 100 lines of the decoder's stale line count, where
+     * none was accepted: the C5 menu stayed shifted, video crawled (board
+     * 2026-11-01). */
+    g_start_line = 250;
+    fail |= run(true, 0, 0, false);
+    g_start_line = 200;
+    fail |= run(false, 0, 0, false);
+    g_start_line = 0;
     printf(fail ? "FAIL\n" : "PASS\n");
     return fail;
 }

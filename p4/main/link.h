@@ -16,6 +16,9 @@ typedef struct {
 
 void link_start(void);
 void link_status(c5_status_t *out);
+/* The C5's decoder is RAW (the bus carries raw IQ): 1; another: 0; link
+ * down: -1. */
+int link_raw_iq(void);
 void link_debug_print(void);   /* TEMP */
 /* Channel table (band letter, MHz) once the C5 sent it; false until then. */
 bool link_channel(int idx, char *band, int *mhz);

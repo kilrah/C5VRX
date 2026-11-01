@@ -4,7 +4,8 @@ set(srcs
     "calibration_bench.c" "menu.c" "menu_ui.c" "menu_raster.c" "analog_video_detect.c"
     "experimental.c" "experimental_phy.c" "settings.c" "console.c" "profile.c" "diag.c" "flightlog.c" "sense_lab.c")
 # FireBeetle 2 ESP32-C5 as the tuner of an ESP32-P4 display (docs/P4LINK.md):
-# DAC codes plus clock on GPIO2..8, UART status/commands on GPIO11/12.
+# raw IQ (or DAC codes) on GPIO2..7/26/27 plus clock on GPIO8, UART
+# status/commands on GPIO11/12.
 if(CONFIG_C5VRX_BOARD_FIREBEETLE_P4LINK)
     list(APPEND srcs "p4link.c")
 endif()
@@ -23,6 +24,9 @@ endif()
 
 target_bitscrambler_add_src("p64.bsasm")
 target_bitscrambler_add_src("u85q.bsasm")
+if(CONFIG_C5VRX_BOARD_FIREBEETLE_P4LINK)
+    target_bitscrambler_add_src("raw.bsasm")
+endif()
 
 # The AFC decoder must not inherit the application's debug-oriented -Og.
 set_source_files_properties(control.c PROPERTIES COMPILE_OPTIONS "-O2")

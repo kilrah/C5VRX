@@ -13,6 +13,13 @@ CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# Console: UART0 primary, USB-Serial-JTAG secondary (read there). UART0's
+# pins GPIO37/38 carry the C5 link (link.c's UART1 takes GPIO37 over once it
+# starts, so only the boot log reaches the C5, which ignores it). USB-Serial-
+# JTAG as the primary console boot-looped this board: cache error in startup
+# (2026-11-01).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 # USB webcam: MJPEG 800x600 only, on the high-speed port.
 CONFIG_TINYUSB_RHPORT_HS=y
 CONFIG_FORMAT_MJPEG_CAM1=y

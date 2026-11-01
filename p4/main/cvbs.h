@@ -1,5 +1,6 @@
 /* C5VRX P4 display by Twotoz and the C5VRX contributors: capture of the
- * C5's six-bit DAC codes (40 MHz bus, unique codes at 20 MS/s) and a
+ * C5's six-bit DAC codes (40 MHz bus, unique codes at 20 MS/s; from raw IQ
+ * through the P4's own BitScrambler decoder when the C5 sends RAW) and a
  * composite decoder (PAL and NTSC colour) into woven YUV420 frames at
  * source resolution (512 pixels of the active line); the PPA converts and
  * scales them. */
@@ -32,6 +33,7 @@ typedef struct {
     uint32_t overruns, restarts;
     float sync_level, blank_level;   /* six-bit code units */
     bool clock;             /* bus data arriving */
+    bool raw_iq;            /* the bus carries raw IQ, the P4 demodulates */
 } cvbs_stats_t;
 
 esp_err_t cvbs_start(void);

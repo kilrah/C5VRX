@@ -202,7 +202,7 @@ void menu_render(void)
         .detected_valid = s_detected_std_valid, .detected_pal = s_detected_std == VIDEO_STD_PAL,
         .output = transport_output(), .output_name = transport_output_name(),
         .gain_mode = receiver_gain_mode_name(mode, gain_mode, sizeof(gain_mode)), .gain_auto = receiver_gain_mode_auto(mode),
-        .demod = transport_demod() == TRANSPORT_DEMOD_U85Q ? "U85Q" : "P64",
+        .demod = transport_demod() == TRANSPORT_DEMOD_U85Q ? "U85Q" : transport_demod() == TRANSPORT_DEMOD_P64 ? "P64" : "P4",
         .gain = s_current_gain, .gain_max = rf_gain_table()->max_index,
         .filter_mode = selected == PROFILE_SELECT_AUTO ? "AUTO" : s_class[selected],
         .filter_active = active >= 0 && active < PROFILES ? s_class[active] : "?",

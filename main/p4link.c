@@ -1,7 +1,8 @@
 /* C5VRX-5 by Twotoz and the C5VRX contributors: control link to an ESP32-P4
  * display (FireBeetle 2 ESP32-C5 P4-link build, docs/P4LINK.md).
  *
- * The picture itself leaves on the DAC pins with the TX clock (transport.c);
+ * The raw IQ (decoder RAW) or the picture leaves on the TX pins with the TX
+ * clock (transport.c);
  * this UART only carries text lines, 115200 8N1, C5 TX GPIO11 / RX GPIO12:
  *   C5 -> P4  "S key=value ..."  status, every 250 ms and on '?'
  *             "L idx name mhz"   one line per channel, answer to 'L'
@@ -64,8 +65,11 @@ static void queue(int command)
     if (s_commands) (void)xQueueSend(s_commands, &command, 0);
 }
 
+/* Whole lines only: the P4's ROM boot log also arrives here (its UART0 TX). */
 static void handle_line(const char *s)
 {
+    if (s[0] == 'K' && (!s[1] || s[2])) return;
+    if (s[0] != 'K' && s[0] != 'C' && s[1]) return;
     switch (s[0]) {
     case 'K':
         switch (s[1]) {
@@ -81,7 +85,7 @@ static void handle_line(const char *s)
     case 'C': {
         char *end;
         const unsigned long idx = strtoul(s + 1, &end, 10);
-        if (end != s + 1 && idx < FPV_CHANNELS) queue(P4LINK_CMD_CHANNEL + (int)idx);
+        if (end != s + 1 && !*end && idx < FPV_CHANNELS) queue(P4LINK_CMD_CHANNEL + (int)idx);
         break;
     }
     case 'A': queue(P4LINK_CMD_AFC); break;

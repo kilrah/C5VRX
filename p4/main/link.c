@@ -147,6 +147,15 @@ void link_status(c5_status_t *out)
     portEXIT_CRITICAL(&s_lock);
 }
 
+int link_raw_iq(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    const bool online = s_status_us && esp_timer_get_time() - s_status_us < 1000000;
+    const bool raw = !strcmp(s_status.demod, "RAW");
+    portEXIT_CRITICAL(&s_lock);
+    return online ? raw : -1;
+}
+
 bool link_channel(int idx, char *band, int *mhz)
 {
     if (!s_table_ok || idx < 0 || idx >= LINK_CHANNELS) return false;

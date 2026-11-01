@@ -47,9 +47,24 @@
 BITSCRAMBLER_PROGRAM(s_p64, "p64");
 BITSCRAMBLER_PROGRAM(s_u85q, "u85q");
 static bool s_started;
-static uint8_t s_demod = TRANSPORT_DEMOD_P64, s_verified_demod = TRANSPORT_DEMOD_P64;
+static uint8_t s_demod = TRANSPORT_DEMOD_DEFAULT, s_verified_demod = TRANSPORT_DEMOD_DEFAULT;
+#ifdef C5VRX_P4LINK
+/* RAW (P4-link build): the ring bytes pass unchanged (raw.bsasm), the P4
+ * demodulates them (its own P64 copy). The LUT is unused: zero. */
+BITSCRAMBLER_PROGRAM(s_raw, "raw");
+static const uint16_t s_raw_table[1024];
+static const void *demod_program(uint8_t d)
+{
+    return d == TRANSPORT_DEMOD_RAW ? s_raw : d == TRANSPORT_DEMOD_U85Q ? s_u85q : s_p64;
+}
+static const uint16_t *demod_table(uint8_t d)
+{
+    return d == TRANSPORT_DEMOD_RAW ? s_raw_table : d == TRANSPORT_DEMOD_U85Q ? u85q_table : p64_table;
+}
+#else
 static const void *demod_program(uint8_t d) { return d == TRANSPORT_DEMOD_U85Q ? s_u85q : s_p64; }
 static const uint16_t *demod_table(uint8_t d) { return d == TRANSPORT_DEMOD_U85Q ? u85q_table : p64_table; }
+#endif
 static const void *tracker_program(void) { return demod_program(s_demod); }
 
 /* 6-bit resistor DAC, LSB first (XIAO D4..D9; 8.2k/3.9k/2k/1k/470R/240R
@@ -57,11 +72,12 @@ static const void *tracker_program(void) { return demod_program(s_demod); }
  * are reserved for future seventh/eighth branches; keep them disconnected
  * here until a complete wider-DAC implementation is hardware-validated. */
 #ifdef C5VRX_P4LINK
-/* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): the same 6-bit
- * codes, LSB first on GPIO2..7, and the TX clock on GPIO8 (data changes on
- * its falling edge, shift_edge NEG; the P4 samples on the rising one). A
- * resistor DAC may still hang on GPIO2..7 for a composite output. */
-static const int s_dac_gpio[8] = {2, 3, 4, 5, 6, 7, -1, -1};
+/* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): all eight TX
+ * bits, LSB first on GPIO2..7, 26, 27 (RAW: the ring byte Q0..Q3 I0..I3;
+ * P64/U85Q: the 6-bit code on GPIO2..7), and the TX clock on GPIO8 (data
+ * changes on its falling edge, shift_edge NEG; the P4 samples on the rising
+ * one). With P64/U85Q a resistor DAC may hang on GPIO2..7. */
+static const int s_dac_gpio[8] = {2, 3, 4, 5, 6, 7, 26, 27};
 #define P4LINK_CLK_GPIO 8
 #else
 static const int s_dac_gpio[8] = {23, 24, 11, 12, 8, 9, -1, -1};
@@ -297,7 +313,13 @@ uint32_t transport_switch_wait_ms(void)
            (uint32_t)((TRANSPORT_SWITCH_GAP_US - (now - s_switch_guard.last_switch_us) + 999) / 1000);
 }
 
-const char *transport_demod_name(uint8_t d) { return d == TRANSPORT_DEMOD_U85Q ? U85Q_MODEL_ID : P64_MODEL_ID; }
+const char *transport_demod_name(uint8_t d)
+{
+#ifdef C5VRX_P4LINK
+    if (d == TRANSPORT_DEMOD_RAW) return "RAW";
+#endif
+    return d == TRANSPORT_DEMOD_U85Q ? U85Q_MODEL_ID : P64_MODEL_ID;
+}
 const char *transport_program_name(void) { return transport_demod_name(s_demod); }
 uint8_t transport_demod(void) { return s_demod; }
 /* The live, verified decoder's LUT16 (without the OUTPUT scaling) and its
@@ -306,6 +328,9 @@ const uint16_t *transport_decoder_lut(unsigned *token_bits)
 {
     if (!s_lut_known || s_transport_fault || !s_started) return NULL;
     *token_bits = s_verified_demod == TRANSPORT_DEMOD_U85Q ? 5u : 4u;
+#ifdef C5VRX_P4LINK
+    if (s_verified_demod == TRANSPORT_DEMOD_RAW) return p64_table;   /* what the P4 runs */
+#endif
     return demod_table(s_verified_demod);
 }
 
@@ -666,7 +691,9 @@ void transport_flog_identity(uint8_t *demod, uint8_t *output_level)
     const bool verified = s_started && s_tx_enabled && s_bs_enabled && s_have_verified && s_lut_known &&
                           !s_transport_fault;
     if (demod) *demod = !verified ? FLOG_DEMOD_UNKNOWN :
-                        s_verified_demod == TRANSPORT_DEMOD_U85Q ? FLOG_DEMOD_U85Q_1A09F5C092E8 : FLOG_DEMOD_P64_R1;
+                        s_verified_demod == TRANSPORT_DEMOD_U85Q ? FLOG_DEMOD_U85Q_1A09F5C092E8 :
+                        s_verified_demod == TRANSPORT_DEMOD_P64 ? FLOG_DEMOD_P64_R1 :
+                        FLOG_DEMOD_UNKNOWN;   /* RAW: the P4 demodulates, no wire slot */
     if (output_level) *output_level = verified ? (uint8_t)s_verified_output : 0xffu;
 }
 
