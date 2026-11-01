@@ -109,11 +109,12 @@ P4:  PARLIO RX, external 40 MHz clock, 8-bit
 - Boundaries: a C5 verified restart (OUTPUT, DEMOD, profile) or its menu
   stops TX and the clock; the P4 ring then stalls, the picture holds and
   `NO VIDEO DATA` shows until the clock returns. A DMA lap (decoder late by
-  more than a ring) drops the line lock and searches again. Without data for
-  0.5 s the P4 restarts its receive (`FILL ... stall_restarts=`): once
-  (2026-11-01) the receive stopped after its first node with the C5 sending,
-  and neither these restarts nor a reset through USB brought it back; the
-  operator's reset of the P4 did. Cause unknown.
+  more than a ring) drops the line lock and searches again.
+- A reset through USB (flashing) does not clear the P4's BitScrambler
+  routing (`HP_SYSTEM.bitscrambler_peri_sel`): after raw IQ the code bus
+  then went into a stopped BitScrambler and no data came until a reset by
+  the button (2026-11-01). `cvbs_start` clears it (log: `receive still
+  routed through the BitScrambler`).
 
 ### Decoder
 
@@ -150,6 +151,21 @@ Six-bit codes, 0 = sync tip, about 20 = blanking (`DAC_IDLE_CODE`):
   4.43 MHz, -15 dB at 3.58 MHz).
 - 10 MS/s for sync and luma: each history sample is the sum of two
   successive 20 MS/s codes, a free low-pass (about 5 MHz of luma).
+- Clicks (black streaks in highlights, 2026-11-01): U80P64-R1 clicks,
+  the same with the C5 or the P4 decoding. In the host model
+  (`research/p4_clicks.py`, `research/p4_luma_clicks.py`) a click is one
+  20 MS/s code ~13 low with ~5 high on either side (phase kept), which a
+  `[1 3 3 1]` history and `[1 6 1]` on lines without a burst cancel. On 84
+  real C5 snapshots (`research/p4_board_clicks.py`, gains 50-69, VTX at the
+  bench) dips of 10+ codes hit ~3 % of picture samples, a third of them 2-5
+  codes long, and the longer ones carry 0.7-1.4 turns of phase, about half
+  still 0.5 turn or more net: FM threshold clicks (cycle slips), which a
+  linear filter only spreads. That filter was tried on the board and showed
+  no visible gain (operator), so it is not in. Another camera/VTX pair
+  shows hardly any (operator): the first one's signal may be the cause
+  (its deviation read 1.24). Remedies, if needed: concealment
+  (a dip far below both sides, flagged by the IQ radius) or a demodulator
+  with a lower threshold in the P4's BitScrambler.
 - Colour (PAL and NTSC), on the 20 MS/s codes (at 10 MS/s the demodulated
   chroma's 2 fsc image would alias to about 1 MHz): per line the burst and 64
   windows across the active line (one per 8 pixels), each correlated with

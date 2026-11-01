@@ -47,6 +47,9 @@
 #include "hal/dma_types.h"
 #include "link.h"
 #include "soc/axi_dma_struct.h"
+#ifdef __riscv
+#include "soc/hp_system_struct.h"
+#endif
 #include "soc/gdma_channel.h"
 
 #ifndef M_PI
@@ -87,8 +90,6 @@ static bitscrambler_handle_t s_bs;
 static bool s_iq;                    /* the running capture decodes raw IQ */
 static volatile bool s_iq_want;
 static uint32_t s_act_n, s_act_hits, s_act_permille, s_mode_votes, s_mode_switches, s_bs_errors;
-static uint32_t s_stall_restarts;
-static int64_t s_begin_us;
 
 /* ---- decode, 10 MS/s ---- */
 #define FS_HZ           10000000
@@ -1081,22 +1082,11 @@ static void fill_task(void *arg)
     for (;;) {
         (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
         mode_vote();
-        /* No data for 0.5 s: restart the receive. A missing bus clock (C5
-         * restart, menu) looks the same and a restart costs nothing then;
-         * a receive that stopped after its first node (seen at boot,
-         * 2026-11-01, with the C5 sending) only recovers this way. */
-        const int64_t now = esp_timer_get_time();
-        if (!s_restart && now - s_last_data_us > 500000 && now - s_begin_us > 500000) {
-            ++s_stall_restarts;
-            s_restart = true;
-        }
         if (s_restart) {
             s_restart = false;
             if (s_iq_want != s_iq) ++s_mode_switches;
             rx_end();
             s_iq = s_iq_want;
-            s_begin_us = esp_timer_get_time();
-            rx_end();
             esp_err_t err = rx_begin();
             ++s_restarts;
             s_resync = true;
@@ -1145,13 +1135,23 @@ esp_err_t cvbs_start(void)
     s_ring = heap_caps_aligned_calloc(128, 1, RING_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     for (int k = 0; k < 3; ++k) s_frames[k] = heap_caps_aligned_calloc(128, 1, CVBS_ROW_BYTES * CVBS_H_MAX, MALLOC_CAP_SPIRAM);
     if (!s_ring || !s_frames[0] || !s_frames[1] || !s_frames[2]) return ESP_ERR_NO_MEM;
+#ifdef __riscv
+    /* A reset through USB (flashing) keeps PARLIO RX routed through the
+     * BitScrambler if raw IQ ran before: the code bus then went into a
+     * stopped BitScrambler and no data came until a reset by the button
+     * (board 2026-11-01). The driver clears it only in bitscrambler_free(). */
+    if (HP_SYSTEM.bitscrambler_peri_sel.bitscrambler_peri_rx_sel == SOC_BITSCRAMBLER_ATTACH_PARL_IO) {
+        ESP_LOGW(TAG, "receive still routed through the BitScrambler (%u): cleared",
+                 (unsigned)HP_SYSTEM.bitscrambler_peri_sel.bitscrambler_peri_rx_sel);
+        HP_SYSTEM.bitscrambler_peri_sel.bitscrambler_peri_rx_sel = 15;   /* none (the reset value) */
+    }
+#endif
     set_slice();
     build_lut();
     chroma_init();
     s_fill_pie = fill_selftest();
     esp_err_t err = rx_create();
     if (err == ESP_OK) err = rx_begin();
-    s_begin_us = esp_timer_get_time();
     if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "capture on %u MHz bus clock, DMA channel %d", (unsigned)(LINK_CLK_HZ / 1000000), s_dma_ch);
     if (xTaskCreatePinnedToCore(decode_task, "cvbs", 6144, NULL, configMAX_PRIORITIES - 2, &s_task, 1) != pdPASS)
@@ -1250,9 +1250,9 @@ void cvbs_debug_print(void)
         }
         n += snprintf(act + n, sizeof(act) - (size_t)n, "%sg%d:%d", p ? "," : "", pin, changes);
     }
-    printf("FILL pie=%d bus=%s c5dem=%d act=%lu%% switches=%lu bs_errors=%lu stall_restarts=%lu\n", s_fill_pie,
+    printf("FILL pie=%d bus=%s c5dem=%d act=%lu%% switches=%lu bs_errors=%lu\n", s_fill_pie,
            s_iq ? "raw-iq" : "codes", link_raw_iq(), (unsigned long)(s_act_permille / 10), (unsigned long)s_mode_switches,
-           (unsigned long)s_bs_errors, (unsigned long)s_stall_restarts);
+           (unsigned long)s_bs_errors);
     printf("FLOG lines/rows/hsyncs:");
     for (int i = 0; i < 32; ++i) {
         const uint32_t v = s_flog[(s_flog_n + i) & 31];
