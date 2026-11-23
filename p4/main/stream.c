@@ -108,9 +108,9 @@ static void send_status(void)
     cvbs_get_stats(&cs);
     header(b, 2, 0, 0);
     const int n = snprintf((char *)b + HDR, sizeof(b) - HDR,
-        "c5=%d ch=%s f=%d sig=%d cn=%d.%d gain=%d gm=%s afc=%d cfo=%d vid=%d std=%s menu=%d scan=%d sp=%d dem=%s "
+        "c5=%d idx=%d ch=%s f=%d sig=%d cn=%d.%d gain=%d gm=%s afc=%d cfo=%d vid=%d std=%s menu=%d scan=%d sp=%d dem=%s "
         "lock=%d pal=%d fields=%lu frames=%lu clock=%d raw=%d drop=%lu",
-        st.online, st.ch, st.freq, st.sig, st.cn_x10 / 10, st.cn_x10 % 10, st.gain, st.gain_mode, st.afc,
+        st.online, st.idx, st.ch, st.freq, st.sig, st.cn_x10 / 10, st.cn_x10 % 10, st.gain, st.gain_mode, st.afc,
         st.cfo_khz, st.video, st.std, st.menu, st.scan, st.scan_pct, st.demod, cs.locked, cs.pal,
         (unsigned long)cs.fields_ps, (unsigned long)cs.frames_ps, cs.clock, cs.raw_iq, (unsigned long)s_ring_full);
     if (n > 0) send_dgram(b, HDR + (size_t)(n < (int)(sizeof(b) - HDR) ? n : (int)(sizeof(b) - HDR - 1)));
