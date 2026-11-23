@@ -143,7 +143,7 @@ test('busy-gated supported keys match console routing across firmware generation
   const routed = consoleSource.match(/case 'o':[^\n]*/)[0];
   const keys = new Set([...routed.matchAll(/case '([^'])'/g)].map(m => m[1]));
   // Older firmware still routes retired demod controls; the website never exposes them.
-  for (const key of ['m', 'K', 'k', 'j', 'P', 'O', 'H']) keys.delete(key);
+  for (const key of ['K', 'k', 'j', 'P', 'O', 'H']) keys.delete(key);
   assert.deepEqual([...MENU_COMMAND_KEYS].sort(), [...keys].sort());
 });
 
@@ -215,14 +215,37 @@ test('the firmware help line enables the DAC self-test key', () => {
   assert.equal(state.supports('Z'), true);
 });
 
- test('P64 status reports the sole model and retired commands stay unavailable', () => {
+ test('P64 status reports the model and retired commands stay unavailable', () => {
  const state = new ReceiverConsole();
  state.push('C5VRX5 version=v5.0.9 demod=U80P64-R1\nSTATUS channel=A1 freq=5865 demod=U80P64-R1 mode=DEFAULT output=2.0x\n');
  assert.equal(state.view().demod, 'U80P64-R1');
- for (const key of ['m','K','k','j','P','O','H']) {
+ for (const key of ['K','k','j','P','O','H']) {
    assert.equal(state.supports(key), false);
    assert.equal(MENU_COMMAND_KEYS.has(key), false);
  }
+ assert.equal(state.supports('m'), false, 'm needs firmware that advertises the decoder choice');
+});
+
+test('current help enables decoder, filter and direct menu keys; decoder and filter changes update the view', () => {
+ const state = new ReceiverConsole();
+ const help = fs.readFileSync(new URL('../main/console.c', import.meta.url), 'utf8')
+   .match(/static void help\(void\)\n\{\n([\s\S]*?)\n\}/)[1];
+ const text = [...help.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(m => m[1]).join('').replace(/\\n/g, '\n');
+ state.push(text);
+ for (const key of ['m', 'f', 'v', 'e', 'G', 'Z']) assert.equal(state.supports(key), true, key);
+ state.push("C5VRX5 v5.0.3 ready: A1 5865 MHz, D32-R2, ultrafine IQ, gain LEVEL ('h' for keys)\n");
+ assert.equal(state.view().demod, 'D32-R2');
+ assert.equal(state.supports('m'), false, 'a reboot requires fresh capability reports');
+ state.push(text);
+ assert.deepEqual(state.push('DEMOD switch to=U80P64-R1 result=ok active=U80P64-R1\n'), ['changed']);
+ assert.equal(state.view().demod, 'U80P64-R1');
+ state.push('DEMOD switch to=U85Q result=refused active=U80P64-R1 (guard, fault or rollback: T TRANSPORT and DEMOD)\n');
+ assert.equal(state.view().demod, 'U80P64-R1');
+ state.push('DEMOD fallback to=U80P64-R1 deviation_x100=120 limit=110 (U50P64-R1 is for deviation <= ~1.0)\n');
+ assert.equal(state.view().demod, 'U80P64-R1');
+ state.push('PROFILE select=NARROW 10MHZ active=NARROW 10MHZ pending=none width_khz=10000\n');
+ assert.equal(state.view().filter, 'NARROW 10MHZ');
+ assert.equal(state.view().profile, 'NARROW 10MHZ');
 });
 
  test('demod identity follows boot/status and preserves an unverified report', () => {

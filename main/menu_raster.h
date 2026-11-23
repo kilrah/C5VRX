@@ -11,8 +11,10 @@
  * menu costs no UI memory.
  *
  * The UI is centred in the active picture on both axes. Horizontal centring
- * lengthens the shared sync/burst prefix to the UI start, so a UI scanline is
- * still exactly prefix + UI row + blank tail (no extra DMA node per line).
+ * lengthens the shared sync prefix to the UI start. Monochrome, no burst
+ * (2026-11-14): every line has the same prefix, so a line's blank tail and
+ * the next line's prefix are one DMA node: a UI line is UI row + (tail +
+ * next prefix), a blank line one node.
  * NTSC active video is 9.4..62.06 us after 0H, PAL 10.35..62.35 us.
  */
 #define MENU_FONT_HEIGHT 8u
@@ -35,10 +37,10 @@
 #define MENU_PREFIX_BYTES MENU_PAL_PREFIX_BYTES
 /* Longest line remainder after the shortest prefix (NTSC lines are <= 2544). */
 #define MENU_TAIL_BYTES (2560u - MENU_NTSC_PREFIX_BYTES)
-#define MENU_PHASES 8u
-/* Two loop forms, burst phase closed over each loop:
- * - interlaced (default): one complete BT.470 two-field frame, NTSC 1499 /
- *   PAL 1811 descriptors (~18 / 22 KiB);
+/* Two loop forms:
+ * - interlaced (default): one complete BT.470 two-field frame; with the
+ *   shared tail+prefix nodes NTSC needs ~1000 descriptors (~12 KiB; with
+ *   per-line burst prefixes it was 1499 / 18 KiB and never fitted at boot);
  * - progressive fallback: one field repeated (NTSC 262 / PAL 312 lines, the
  *   "240p/288p" form), 748 / 905 descriptors, used only when the interlaced
  *   chain cannot be allocated. The operator's display showed the progressive
@@ -51,11 +53,12 @@
 typedef enum { VIDEO_STD_NTSC, VIDEO_STD_PAL } video_standard_t;
 
 typedef struct {
-    uint8_t prefix[MENU_PHASES][MENU_PREFIX_BYTES];
-    uint8_t no_burst[MENU_PREFIX_BYTES];
+    /* Blank level (a line tail, a blank half-line), then the line prefix
+     * (H sync at its start) at offset MENU_TAIL_BYTES: tail + next prefix
+     * is one contiguous node. */
+    uint8_t tail_prefix[MENU_TAIL_BYTES + MENU_PREFIX_BYTES];
     uint8_t equalizing[1280];
     uint8_t broad[1280];
-    uint8_t blank[MENU_TAIL_BYTES];
     uint8_t ui[MENU_UI_LINES][MENU_UI_BYTES];
 } menu_raster_t;
 

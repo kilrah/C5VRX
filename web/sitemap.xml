@@ -3,12 +3,9 @@
         xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://c5vrx.com/</loc>
-    <lastmod>2026-10-24</lastmod>
+    <lastmod>2026-11-15</lastmod>
     <image:image>
-      <image:loc>https://c5vrx.com/assets/c5vrx-diy-kit.jpg</image:loc>
-    </image:image>
-    <image:image>
-      <image:loc>https://c5vrx.com/assets/c5vrx-diy-kit-top.webp</image:loc>
+      <image:loc>https://c5vrx.com/assets/c5vrx-module.jpg</image:loc>
     </image:image>
   </url>
 </urlset>

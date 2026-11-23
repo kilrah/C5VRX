@@ -1,0 +1,445 @@
+{
+ "source": "research/edge_window.py",
+ "evidence": "host model only; C/N after the 12 MHz filter; fixed analog gain, no gain write modelled",
+ "decoder": "U80P64-R1",
+ "standard": "NTSC",
+ "deviation": 0.7,
+ "noise_top_cells2": 4.8,
+ "radius_cells": 4.2,
+ "lanes": [
+  {
+   "cn_db": 0,
+   "ideal": {
+    "picture": 0.867,
+    "sinad_db": -8.46
+   },
+   "ultrafine": {
+    "picture": 0.508,
+    "sinad_db": -8.29
+   },
+   "fine": {
+    "picture": 0.243,
+    "sinad_db": -8.41
+   },
+   "coarse": {
+    "picture": 0.134,
+    "sinad_db": -8.88
+   }
+  },
+  {
+   "cn_db": 2,
+   "ideal": {
+    "picture": 0.966,
+    "sinad_db": -6.26
+   },
+   "ultrafine": {
+    "picture": 0.96,
+    "sinad_db": -6.13
+   },
+   "fine": {
+    "picture": 0.963,
+    "sinad_db": -6.35
+   },
+   "coarse": {
+    "picture": 0.871,
+    "sinad_db": -7.05
+   }
+  },
+  {
+   "cn_db": 4,
+   "ideal": {
+    "picture": 0.993,
+    "sinad_db": -3.46
+   },
+   "ultrafine": {
+    "picture": 0.994,
+    "sinad_db": -3.38
+   },
+   "fine": {
+    "picture": 0.991,
+    "sinad_db": -3.73
+   },
+   "coarse": {
+    "picture": 0.986,
+    "sinad_db": -4.73
+   }
+  },
+  {
+   "cn_db": 6,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": -0.55
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -0.58
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": -0.88
+   },
+   "coarse": {
+    "picture": 0.999,
+    "sinad_db": -2.21
+   }
+  },
+  {
+   "cn_db": 8,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 1.82
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": 1.11
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 1.6
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 0.12
+   }
+  },
+  {
+   "cn_db": 10,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 3.61
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": 0.03
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 3.5
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 2.12
+   }
+  },
+  {
+   "cn_db": 12,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 5.05
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -2.58
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 5.08
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 4.16
+   }
+  },
+  {
+   "cn_db": 14,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 6.2
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -2.87
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 6.49
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 6.16
+   }
+  },
+  {
+   "cn_db": 16,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 7.11
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -0.46
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 5.06
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 6.89
+   }
+  },
+  {
+   "cn_db": 18,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 7.8
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -3.03
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": -3.04
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 7.93
+   }
+  },
+  {
+   "cn_db": 20,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 8.32
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": -1.14
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": -3.13
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 8.96
+   }
+  },
+  {
+   "cn_db": 24,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 8.98
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": 2.2
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 4.11
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 9.76
+   }
+  },
+  {
+   "cn_db": 28,
+   "ideal": {
+    "picture": 1.0,
+    "sinad_db": 9.31
+   },
+   "ultrafine": {
+    "picture": 1.0,
+    "sinad_db": 3.98
+   },
+   "fine": {
+    "picture": 1.0,
+    "sinad_db": 4.64
+   },
+   "coarse": {
+    "picture": 1.0,
+    "sinad_db": 6.43
+   }
+  }
+ ],
+ "dc": [
+  {
+   "cn_db": 4,
+   "dc": {
+    "0.0": {
+     "picture": 0.989,
+     "sinad_db": -3.47
+    },
+    "0.3": {
+     "picture": 0.991,
+     "sinad_db": -3.55
+    },
+    "0.6": {
+     "picture": 0.987,
+     "sinad_db": -3.73
+    },
+    "1.0": {
+     "picture": 0.975,
+     "sinad_db": -4.11
+    },
+    "1.5": {
+     "picture": 0.953,
+     "sinad_db": -4.73
+    },
+    "2.0": {
+     "picture": 0.746,
+     "sinad_db": -5.43
+    },
+    "3.0": {
+     "picture": 0.041,
+     "sinad_db": -6.71
+    }
+   },
+   "dc_2.0_token_plane_centred": {
+    "picture": 0.981,
+    "sinad_db": -4.96
+   }
+  },
+  {
+   "cn_db": 6,
+   "dc": {
+    "0.0": {
+     "picture": 1.0,
+     "sinad_db": -0.57
+    },
+    "0.3": {
+     "picture": 1.0,
+     "sinad_db": -0.64
+    },
+    "0.6": {
+     "picture": 1.0,
+     "sinad_db": -0.86
+    },
+    "1.0": {
+     "picture": 0.994,
+     "sinad_db": -1.37
+    },
+    "1.5": {
+     "picture": 0.988,
+     "sinad_db": -2.3
+    },
+    "2.0": {
+     "picture": 0.95,
+     "sinad_db": -3.42
+    },
+    "3.0": {
+     "picture": 0.158,
+     "sinad_db": -5.54
+    }
+   },
+   "dc_2.0_token_plane_centred": {
+    "picture": 0.996,
+    "sinad_db": -2.18
+   }
+  },
+  {
+   "cn_db": 9,
+   "dc": {
+    "0.0": {
+     "picture": 1.0,
+     "sinad_db": 2.72
+    },
+    "0.3": {
+     "picture": 1.0,
+     "sinad_db": 2.66
+    },
+    "0.6": {
+     "picture": 1.0,
+     "sinad_db": 2.49
+    },
+    "1.0": {
+     "picture": 1.0,
+     "sinad_db": 2.06
+    },
+    "1.5": {
+     "picture": 0.998,
+     "sinad_db": 1.12
+    },
+    "2.0": {
+     "picture": 0.997,
+     "sinad_db": -0.22
+    },
+    "3.0": {
+     "picture": 0.857,
+     "sinad_db": -3.66
+    }
+   },
+   "dc_2.0_token_plane_centred": {
+    "picture": 1.0,
+    "sinad_db": 1.92
+   }
+  },
+  {
+   "cn_db": 12,
+   "dc": {
+    "0.0": {
+     "picture": 1.0,
+     "sinad_db": 5.0
+    },
+    "0.3": {
+     "picture": 1.0,
+     "sinad_db": 4.94
+    },
+    "0.6": {
+     "picture": 1.0,
+     "sinad_db": 4.73
+    },
+    "1.0": {
+     "picture": 1.0,
+     "sinad_db": 4.27
+    },
+    "1.5": {
+     "picture": 1.0,
+     "sinad_db": 3.39
+    },
+    "2.0": {
+     "picture": 1.0,
+     "sinad_db": 2.18
+    },
+    "3.0": {
+     "picture": 0.954,
+     "sinad_db": -1.66
+    }
+   },
+   "dc_2.0_token_plane_centred": {
+    "picture": 1.0,
+    "sinad_db": 4.89
+   }
+  },
+  {
+   "cn_db": 20,
+   "dc": {
+    "0.0": {
+     "picture": 1.0,
+     "sinad_db": 8.3
+    },
+    "0.3": {
+     "picture": 1.0,
+     "sinad_db": 8.13
+    },
+    "0.6": {
+     "picture": 1.0,
+     "sinad_db": 7.74
+    },
+    "1.0": {
+     "picture": 1.0,
+     "sinad_db": 7.06
+    },
+    "1.5": {
+     "picture": 1.0,
+     "sinad_db": 5.81
+    },
+    "2.0": {
+     "picture": 1.0,
+     "sinad_db": 4.22
+    },
+    "3.0": {
+     "picture": 1.0,
+     "sinad_db": 1.21
+    }
+   },
+   "dc_2.0_token_plane_centred": {
+    "picture": 1.0,
+    "sinad_db": 8.46
+   }
+  }
+ ]
+}

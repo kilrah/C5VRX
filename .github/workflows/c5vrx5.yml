@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'main/**'
+      - 'hardware_experiments/**'
       - 'test/**'
       - 'research/**'
       - 'tools/**'
@@ -19,6 +20,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - 'main/**'
+      - 'hardware_experiments/**'
       - 'test/**'
       - 'research/**'
       - 'tools/**'
@@ -34,6 +36,71 @@ concurrency:
   group: c5vrx5-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  # Hardware experiments (hardware_experiments/<id>/hwx.h): the same firmware
+  # with an experiment's pin map, published per experiment for the flasher's
+  # Hardware experiments tab. Never a Latest release.
+  hwx-list:
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.list.outputs.ids }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: List hardware experiments
+        id: list
+        run: |
+          set -euo pipefail
+          ids="$(find hardware_experiments -mindepth 2 -maxdepth 2 -name hwx.h -printf '%h\n' 2>/dev/null \
+            | xargs -r -n1 basename | sort | jq -R . | jq -sc .)"
+          # Ids become release tags (c5vrx5-hwx-<id>-v5.0.N / -pr-N): no hyphens.
+          jq -e 'all(.[]; test("^[a-z0-9_]+$"))' <<< "$ids" > /dev/null
+          echo "ids=${ids}" >> "$GITHUB_OUTPUT"
+          echo "Hardware experiments: ${ids}"
+  build-hwx:
+    needs: hwx-list
+    if: needs.hwx-list.outputs.ids != '[]'
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.2
+    strategy:
+      fail-fast: false
+      matrix:
+        id: ${{ fromJSON(needs.hwx-list.outputs.ids) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Build hardware experiment ${{ matrix.id }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HWX: ${{ matrix.id }}
+          BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          . "$IDF_PATH/export.sh"
+          if [[ -n "$PR_NUMBER" ]]; then version="5.0.0-pr.${PR_NUMBER}-hwx.${HWX}";
+          else version="5.0.${GITHUB_RUN_NUMBER}-hwx.${HWX}"; fi
+          idf.py -B build-hwx -DSDKCONFIG=build-hwx/sdkconfig -DC5VRX_HWX="$HWX" \
+            -DC5VRX5_VERSION="$version" -DC5VRX5_COMMIT="$BUILD_SHA" build
+          mkdir -p release
+          cp build-hwx/c5vrx5.bin build-hwx/bootloader/bootloader.bin \
+             build-hwx/partition_table/partition-table.bin build-hwx/flasher_args.json release/
+          esptool.py --chip esp32c5 merge_bin -o release/c5vrx5_merged.bin \
+            --flash_mode dio --flash_size 8MB --flash_freq 80m \
+            0x2000 release/bootloader.bin 0x8000 release/partition-table.bin 0x10000 release/c5vrx5.bin
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          printf '%s\n' "$BUILD_SHA" > release/COMMIT
+          python3 tools/firmware_input_hash.py 5 "$HWX" > release/FIRMWARE_INPUT_SHA
+          printf '%s\n' "$version" > release/VERSION
+          printf '%s\n' "$HWX" > release/HWX
+          cp "hardware_experiments/${HWX}/hwx.h" release/
+          cd release && sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c5vrx5-hwx-${{ matrix.id }}-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          path: release/
   build-psram:
     runs-on: ubuntu-latest
     container: espressif/idf:v6.0.2
@@ -113,6 +180,12 @@ jobs:
           /tmp/test_agc_compare_err | tail -5
           cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_agc_options.c ../main/agc.c -lm -o /tmp/test_agc_options
           /tmp/test_agc_options
+          # LEVEL and the core near the table floor (an external LNA close in)
+          cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_agc_strong.c ../main/agc.c ../main/gain.c ../main/arc_phy.c -lm -o /tmp/test_agc_strong
+          /tmp/test_agc_strong | tail -1
+          # STRONG LANE: a coarser IQ lane when the floor rows still fold (policy only)
+          cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_strong_lane.c -o /tmp/test_strong_lane
+          /tmp/test_strong_lane
           # LEVEL's carrier radius of a folded window on the exact hardware fold model (adc_fold.h)
           cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_fold_radius.c ../main/agc.c -lm -o /tmp/test_fold_radius
           /tmp/test_fold_radius
@@ -128,6 +201,9 @@ jobs:
           /tmp/test_video_quality ../research/data/afc_2026-10-18 ../research/data/edge_dc_2026-10-19 | tail -1
           cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_afc_evidence.c -o /tmp/test_afc_evidence
           /tmp/test_afc_evidence
+          # AUTO OUTPUT: affine DAC word and the sync/white-referenced level policy
+          cc -O2 -std=c11 -Wall -Wextra -Werror -I../main test_output_auto.c -lm -o /tmp/test_output_auto
+          /tmp/test_output_auto
       - name: Archived kp helper regressions (not firmware)
         shell: bash
         run: |
@@ -147,6 +223,8 @@ jobs:
           python3 test/test_flight_log_tool.py
           python3 test/test_experimental_phy.py
           python3 test/test_experimental.py
+          python3 test/test_sample_clock_runtime.py
+          python3 test/test_hwx.py
           python3 test/test_settings.py
           python3 test/test_phy_observation_hook.py
           python3 test/test_bank1_watch_runtime.py
@@ -163,6 +241,7 @@ jobs:
           python3 test/test_phase_repair_runtime.py
           python3 test/test_calibration_search_runtime.py
           python3 test/test_manual_calibration_runtime.py
+          python3 test/test_boot_memory_runtime.py
       - name: Analytic IQ lane reference
         shell: bash
         run: |
@@ -184,6 +263,10 @@ jobs:
           /tmp/iqf-test-env/bin/python test/test_p64.py
           /tmp/iqf-test-env/bin/python test/test_picture_sync.py
           /tmp/iqf-test-env/bin/python research/p64_validation.py --check
+      - name: U50P64-R1 range decoder (table, program and transfer gates current)
+        run: /tmp/iqf-test-env/bin/python research/u50p64.py --check
+      - name: D32-R2 strong-signal decoder (table, program and transfer gates current)
+        run: /tmp/iqf-test-env/bin/python research/nl_tracker.py --check
       - name: Historical kp/LP replay (retired policy baseline)
         run: /tmp/iqf-test-env/bin/python research/ladder_gate.py check research/data/ladder_gate_rates.json
       - name: OUTPUT research invariants (DAC-only changes and bounded policy)
@@ -279,3 +362,71 @@ jobs:
           gh release create "$TAG" release/* --repo "$repo" --target "$BUILD_SHA" --title "$title" \
             "${flags[@]}" \
             --notes "C5VRX-5 ${VERSION} at ${BUILD_SHA}. Use Full firmware when switching from another generation."
+  publish-hwx:
+    # Host tests run in build: an experiment is only published beside a passing production build.
+    needs: [hwx-list, build, build-hwx]
+    if: >-
+      needs.hwx-list.outputs.ids != '[]' && (
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        id: ${{ fromJSON(needs.hwx-list.outputs.ids) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: c5vrx5-hwx-${{ matrix.id }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: release/
+      - name: Publish hardware experiment ${{ matrix.id }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HWX: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          if [[ -n "$PR_NUMBER" ]] &&
+             [[ "$(gh pr view "$PR_NUMBER" --repo "$repo" --json state --jq .state)" != "OPEN" ]]; then
+            echo "PR #${PR_NUMBER} is no longer open; not publishing."
+            exit 0
+          fi
+          # Main: an immutable version per experiment, c5vrx5-hwx-<id>-v5.0.<run number>
+          # (the run of c5vrx5-v5.0.<run number>); never replace its assets. PR: one
+          # mutable channel per experiment and PR (cleanup: pr-channel-cleanup.yml).
+          # Never the repository's Latest.
+          if [[ -n "$PR_NUMBER" ]]; then
+            tag="c5vrx5-hwx-${HWX}-pr-${PR_NUMBER}"
+            previous="$tag"
+            title="C5VRX-5 hardware experiment ${HWX} — PR #${PR_NUMBER} / unmerged"
+          else
+            tag="c5vrx5-hwx-${HWX}-v5.0.${GITHUB_RUN_NUMBER}"
+            previous="$(gh release list --repo "$repo" --limit 200 --json tagName,isDraft \
+              | jq -r '.[] | select(.isDraft == false) | .tagName' \
+              | grep -E "^c5vrx5-hwx-${HWX}-v5\.[0-9]+\.[0-9]+$" | sort -V | tail -1 || true)"
+            title="C5VRX-5 hardware experiment ${HWX} v5.0.${GITHUB_RUN_NUMBER}"
+          fi
+          # Unchanged firmware inputs keep the existing build.
+          if [[ -n "$previous" ]] && gh release view "$previous" --repo "$repo" >/dev/null 2>&1; then
+            dir="$(mktemp -d)"
+            if gh release download "$previous" --repo "$repo" --pattern FIRMWARE_INPUT_SHA --dir "$dir" &&
+               cmp -s "$dir/FIRMWARE_INPUT_SHA" release/FIRMWARE_INPUT_SHA; then
+              echo "Firmware inputs unchanged; keeping $previous."
+              exit 0
+            fi
+            # Only PR channels are replaced; versioned main builds are immutable.
+            if [[ -n "$PR_NUMBER" ]]; then gh release delete "$tag" --repo "$repo" --yes --cleanup-tag; fi
+          fi
+          gh release create "$tag" release/* --repo "$repo" --target "$BUILD_SHA" --title "$title" \
+            --prerelease --latest=false \
+            --notes "Hardware experiment ${HWX} ($(cat release/VERSION)) at ${BUILD_SHA}. Not a receiver for goggles: see hwx.h for the pin map and wiring. Use Full firmware."
+          # The unversioned main channel of PR #314/#315 (c5vrx5-hwx-<id>) is replaced by versions.
+          if [[ -z "$PR_NUMBER" ]] && gh release view "c5vrx5-hwx-${HWX}" --repo "$repo" >/dev/null 2>&1; then
+            gh release delete "c5vrx5-hwx-${HWX}" --repo "$repo" --yes --cleanup-tag
+          fi

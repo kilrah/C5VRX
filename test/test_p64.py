@@ -56,11 +56,49 @@ def check_u85q():
         assert "kp_tables" not in source and "u85q_lp" not in source, name
 
 
+def check_d32():
+    """D32-R2 (research/nl_tracker.py): the U85Q program, instruction for
+    instruction, with its own table; header and program current."""
+    import nl_tracker
+    table = nl_tracker.table()
+    assert nl_tracker.HEADER.read_text() == nl_tracker.header_text(table)
+    assert nl_tracker.PROGRAM.read_text() == nl_tracker.program_text(table)
+    nl_tracker.gates(table)
+    instructions, meta, lut = u85q_lp.assemble(nl_tracker.PROGRAM)
+    reference_instructions, reference_meta, _ = u85q_lp.assemble(ROOT / "main/u85q.bsasm")
+    binary = u85q_lp._bsasm().insts_to_binary(instructions, meta, lut)
+    reference = u85q_lp._bsasm().insts_to_binary(reference_instructions, reference_meta, lut)
+    assert binary[:300] == reference[:300] and len(binary) == 300 + 2048   # same program, own LUT
+    assert np.array_equal(lut, table)
+    assert struct.unpack_from("<1024H", binary, 300) == tuple(int(v) for v in table)
+
+
+def check_u50p64():
+    """U50P64-R1 (research/u50p64.py): the U80P64-R1 program, instruction for
+    instruction, with the loop-gain 0.50 table; header and program current."""
+    import u50p64
+    table = u50p64.table()
+    assert u50p64.HEADER.read_text() == u50p64.header_text(table)
+    assert u50p64.PROGRAM.read_text() == u50p64.program_text(table)
+    u50p64.gates(table)
+    instructions, meta, lut = u85q_lp.assemble(u50p64.PROGRAM)
+    reference_instructions, reference_meta, _ = u85q_lp.assemble(ROOT / "main/p64.bsasm")
+    assert len(instructions) == 8 and np.array_equal(lut, table)
+    binary = u85q_lp._bsasm().insts_to_binary(instructions, meta, lut)
+    reference = u85q_lp._bsasm().insts_to_binary(reference_instructions, reference_meta, lut)
+    assert binary == reference and binary[:7] == bytes((1, 0, 3, 8, 0, 2, 1)) and len(binary) == 300 + 2048
+    assert struct.unpack_from("<1024H", binary, 300) == tuple(int(v) for v in table)
+
+
 def main():
-    # Two fixed decoders (operator decision 2026-10-28): P64 and the untrained
+    # Fixed decoders (operator decision 2026-10-28): P64 and the untrained
     # U85Q, no kp ladder or LP; the retired policies stay research.
     build = (ROOT / "main/CMakeLists.txt").read_text()
-    assert build.count('target_bitscrambler_add_src(') == 2
+    assert build.count('target_bitscrambler_add_src(') == 4
+    assert 'target_bitscrambler_add_src("u50p64.bsasm")' in build
+    check_u50p64()
+    assert 'target_bitscrambler_add_src("d32.bsasm")' in build
+    check_d32()
     assert 'target_bitscrambler_add_src("p64.bsasm")' in build
     assert 'target_bitscrambler_add_src("u85q.bsasm")' in build
     check_u85q()

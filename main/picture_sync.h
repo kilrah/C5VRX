@@ -43,7 +43,14 @@
 
 typedef struct { uint16_t found, expected; } picture_sync_t;
 /* The slicer carried from one window to the next (zero: none yet). */
-typedef struct { const uint16_t *lut; uint16_t threshold_x2; bool valid; } picture_state_t;
+typedef struct {
+    const uint16_t *lut; uint16_t threshold_x2; bool valid;
+    /* The last window's levels in 4-pair sums (DAC code x4) of the unscaled
+     * decoder, for AUTO OUTPUT (output_auto.h): the 3rd percentile (sync
+     * tip), the median and the 99.5th percentile (peak white, chroma
+     * included). levels: a sync level stood apart from the bulk. */
+    uint16_t tip_x4, mid_x4, top_x4; bool levels;
+} picture_state_t;
 
 /* One DAC code per byte pair, as the TX BitScrambler: lut16 with `bits`-bit
  * tokens (P64 4, U85Q 5). */
@@ -88,16 +95,20 @@ static inline picture_sync_t picture_sync_window(picture_state_t *ps, const uint
     }
     const unsigned total = n >= 4u ? n - 3u : 0u;
     /* This window's levels set the next window's slicer. */
-    unsigned tip = 0, mid = 0, acc = 0;
+    unsigned tip = 0, mid = 0, top = 0, acc = 0;
+    bool have_mid = false;
     for (unsigned v = 0; v < 253u && total; ++v) {
         const unsigned before = acc;
         acc += hist[v];
         if (before * 100u < 3u * total && acc * 100u >= 3u * total) tip = v;
-        if (before * 2u < total && acc * 2u >= total) { mid = v; break; }
+        if (!have_mid && before * 2u < total && acc * 2u >= total) { mid = v; have_mid = true; }
+        if (before * 200u < 199u * total && acc * 200u >= 199u * total) { top = v; break; }
     }
     /* No sync level apart from the bulk (noise): a slicer under everything. */
     ps->threshold_x2 = (uint16_t)(mid >= tip + PICTURE_MIN_SPAN ? tip + mid : 0u);
     ps->valid = total != 0;
+    ps->tip_x4 = (uint16_t)tip; ps->mid_x4 = (uint16_t)mid; ps->top_x4 = (uint16_t)top;
+    ps->levels = total != 0 && mid >= tip + PICTURE_MIN_SPAN && top >= mid;
     if (!count) return r;
     r.expected = (uint16_t)(total * 10u / PICTURE_LINE_PAIRS_X10);
     if (!r.expected) r.expected = 1;

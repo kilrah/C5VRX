@@ -66,7 +66,8 @@ int main(void)
             assert(menu_raster_emit(&raster, v, interlaced, segment, &s));
             unsigned halves = menu_loop_halves(v, interlaced);
             assert(s.samples == menu_half_sample(v, halves));
-            assert(s.nodes && s.nodes <= MENU_MAX_NODES && s.sync > 1000 && s.burst > 1000);
+            assert(s.nodes && s.nodes <= MENU_MAX_NODES && s.sync > 1000 && s.burst == 0);   /* monochrome */
+            if (interlaced) assert(s.nodes <= (v == VIDEO_STD_PAL ? 1250u : 1060u));   /* fits at boot (was 1811 / 1499) */
             assert(halves == (v == VIDEO_STD_PAL ? (interlaced ? 1250u : 624u) : (interlaced ? 1050u : 524u)));
             if (!interlaced) assert(s.nodes <= (v == VIDEO_STD_PAL ? 940u : 780u));
             check_wave(v, interlaced, halves);
@@ -78,6 +79,6 @@ int main(void)
             }
         }
     }
-    puts("PASS: PAL/NTSC interlaced and progressive menu rasters, half-line sync grid across the wrap, field broad pulses, sync/burst, DAC bounds and DMA alignment");
+    puts("PASS: PAL/NTSC interlaced and progressive menu rasters, half-line sync grid across the wrap, field broad pulses, sync, no burst, node budget, DAC bounds and DMA alignment");
     return 0;
 }

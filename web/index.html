@@ -15,14 +15,14 @@
 <meta property="og:description" content="Build a DIY 5.8 GHz analog FPV receiver with the ESP32-C5. Explore the hardware, flash C5VRX firmware over USB and control your receiver in the browser.">
 <meta property="og:url" content="https://c5vrx.com/">
 <meta property="og:locale" content="en_US">
-<meta property="og:image" content="https://c5vrx.com/assets/c5vrx-diy-kit.jpg">
+<meta property="og:image" content="https://c5vrx.com/assets/c5vrx-module.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="789">
-<meta property="og:image:alt" content="3D preview of the upcoming C5VRX DIY kit board">
+<meta property="og:image:height" content="800">
+<meta property="og:image:alt" content="C5VRX receiver module with a XIAO ESP32-C5 next to a small FPV drone">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://c5vrx.com/assets/c5vrx-diy-kit.jpg">
-<meta name="twitter:image:alt" content="3D preview of the upcoming C5VRX DIY kit board">
+<meta name="twitter:image" content="https://c5vrx.com/assets/c5vrx-module.jpg">
+<meta name="twitter:image:alt" content="C5VRX receiver module with a XIAO ESP32-C5 next to a small FPV drone">
 <meta name="twitter:title" content="C5VRX | Open-Source ESP32-C5 Analog FPV Receiver">
 <meta name="twitter:description" content="Build a DIY 5.8 GHz analog FPV receiver with the ESP32-C5. Explore the hardware, flash C5VRX firmware over USB and control your receiver in the browser.">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/favicon.png?v=20261011-white">
@@ -53,7 +53,7 @@
         "@id": "https://c5vrx.com/#firmware"
       },
       "primaryImageOfPage": {
-        "@id": "https://c5vrx.com/#diy-kit-preview"
+        "@id": "https://c5vrx.com/#module-photo"
       }
     },
     {
@@ -82,12 +82,12 @@
     },
     {
       "@type": "ImageObject",
-      "@id": "https://c5vrx.com/#diy-kit-preview",
-      "contentUrl": "https://c5vrx.com/assets/c5vrx-diy-kit.jpg",
-      "url": "https://c5vrx.com/assets/c5vrx-diy-kit.jpg",
+      "@id": "https://c5vrx.com/#module-photo",
+      "contentUrl": "https://c5vrx.com/assets/c5vrx-module.jpg",
+      "url": "https://c5vrx.com/assets/c5vrx-module.jpg",
       "width": 1200,
-      "height": 789,
-      "caption": "3D preview of the upcoming C5VRX DIY kit board"
+      "height": 800,
+      "caption": "C5VRX receiver module with a XIAO ESP32-C5"
     }
   ]
 }
@@ -129,13 +129,12 @@
     <main id="main">
       <div class="project-intro">
         <h1>C5VRX: ESP32-C5 analog FPV receiver</h1>
-        <p>Build your own 5.8 GHz analog FPV receiver with an ESP32-C5. Six resistors connected to its GPIO pins make the AV video output. Build it on perfboard, flash the firmware over USB and connect your goggles or monitor.</p>
+        <p>Build your own 5.8 GHz analog FPV receiver with an ESP32-C5. Six resistors connected to its GPIO pins make the AV video output. Build it on perfboard or get a ready-made module, flash the firmware over USB and connect your goggles or monitor.</p>
         <nav class="project-shortcuts" aria-label="Explore C5VRX">
           <a href="#tools">Web flasher</a>
-          <a href="#about">How it works</a>
-          <a href="#diy-kit">Upcoming DIY kit</a>
-          <a href="#hardware">Build components</a>
+          <a href="#hardware">Get the hardware</a>
           <a href="#faq">FAQ</a>
+          <a href="#about">How it works</a>
         </nav>
       </div>
       <section class="safety-notice" id="safety" aria-labelledby="safetyTitle">
@@ -169,6 +168,7 @@
           <div class="sources" role="group" aria-label="Firmware source">
             <button type="button" id="tabAlpha" aria-pressed="true" class="source-button active">C5VRX-5</button>
             <button type="button" id="tabLocal" aria-pressed="false" class="source-button">Local File</button>
+            <button type="button" id="tabHwx" aria-pressed="false" class="source-button">Hardware experiments</button>
             <button type="button" id="tabGithub" aria-pressed="false" class="source-button">Legacy builds</button>
           </div>
 
@@ -214,6 +214,36 @@
                 <input type="text" id="inputFlashOffset" class="form-control" value="0x0" placeholder="0x0 or 0x10000" autocomplete="off" spellcheck="false">
                 <small class="text-muted">Use <code>0x0</code> for a merged image, <code>0x10000</code> for an application binary.</small>
               </div>
+            </div>
+          </div>
+
+          <!-- Hardware experiments (hardware_experiments/<id>) -->
+          <div id="paneHwx" class="tab-pane">
+            <div class="warning-box">
+              <strong>Hardware experiments</strong>
+              <span>Builds for bench hardware such as an FPGA capture board. They drive pins differently from a normal receiver (no DAC video output) and need the wiring in the experiment's <code>hwx.h</code>. Not for goggles or flight. Flash a normal C5VRX-5 build to go back.</span>
+            </div>
+            <div class="field">
+              <label for="selectHwxBuild">Experiment</label>
+              <div class="select-row">
+                <select id="selectHwxBuild" class="form-control"><option value="">Loading hardware experiments…</option></select>
+              </div>
+            </div>
+            <details class="release-metadata">
+              <summary>Build details</summary>
+              <div id="hwxBuildDetails" class="info-box" hidden>
+                <div class="info-row"><span class="info-label">Build</span><span class="info-value" id="infoHwxBuildName">-</span></div>
+                <div class="info-row"><span class="info-label">Published</span><span class="info-value" id="infoHwxBuildDate">-</span></div>
+                <div class="info-row"><span class="info-label">Tag</span><span class="info-value" id="infoHwxBuildTag">-</span></div>
+                <div class="info-row"><span class="info-label">Assets</span><span class="info-value" id="infoHwxBuildAssets">-</span></div>
+              </div>
+            </details>
+            <div class="field">
+              <label for="selectHwxPackageType">Package</label>
+              <select id="selectHwxPackageType" class="form-control">
+                <option value="merged">Full firmware</option>
+                <option value="app_only">App only</option>
+              </select>
             </div>
           </div>
 
@@ -312,8 +342,10 @@
                 <button type="button" role="tab" id="menu-channel" aria-controls="pane-channel" aria-selected="false" tabindex="-1" data-menu="channel">CHANNEL</button>
                 <button type="button" role="tab" id="menu-scan" aria-controls="pane-scan" aria-selected="false" tabindex="-1" data-menu="scan">SCAN</button>
                 <button type="button" role="tab" id="menu-video" aria-controls="pane-video" aria-selected="false" tabindex="-1" data-menu="video">VIDEO</button>
+                <button type="button" role="tab" id="menu-filter" aria-controls="pane-filter" aria-selected="false" tabindex="-1" data-menu="filter">FILTER</button>
                 <button type="button" role="tab" id="menu-calibrate" aria-controls="pane-calibrate" aria-selected="false" tabindex="-1" data-menu="calibrate">CALIBRATE</button>
                 <button type="button" role="tab" id="menu-output" aria-controls="pane-output" aria-selected="false" tabindex="-1" data-menu="output">OUTPUT</button>
+                <button type="button" role="tab" id="menu-decoder" aria-controls="pane-decoder" aria-selected="false" tabindex="-1" data-menu="decoder">DECODER</button>
                 <button type="button" role="tab" id="menu-gain" aria-controls="pane-gain" aria-selected="false" tabindex="-1" data-menu="gain">GAIN</button>
                 <button type="button" role="tab" id="menu-dac" aria-controls="pane-dac" aria-selected="false" tabindex="-1" data-menu="dac">DAC TEST</button>
                 <button type="button" role="tab" id="menu-exit" aria-controls="pane-exit" aria-selected="false" tabindex="-1" data-menu="exit">EXIT</button>
@@ -344,13 +376,19 @@
                   <p class="hint">Cycles AUTO → NTSC → PAL for the menu picture. AUTO follows the camera.</p>
                   <button type="button" class="command-button" data-command="v" data-hint="Cycle AUTO / NTSC / PAL? The receiver saves the selected video standard." disabled>Change video standard <kbd>v</kbd></button>
                 </div>
+                <div role="tabpanel" id="pane-filter" aria-labelledby="menu-filter" hidden>
+                  <h2>ANALOG FILTER</h2>
+                  <dl class="readouts"><div><dt>Selected</dt><dd data-value="filter">—</dd></div><div><dt>Active</dt><dd data-value="profile">—</dd></div></dl>
+                  <p class="hint">Cycles AUTO → XNARROW → NARROW (10 MHz) → NORMAL (12 MHz) → WIDE (16 MHz). AUTO starts on NORMAL and follows the VTX when live VTX matching is on; the other choices appear once that filter has been calibrated. The choice is kept across reboots. A live change is a verified restart that briefly interrupts video.</p>
+                  <button type="button" class="command-button" data-command="f" data-hint="Change the analog filter? Video is briefly interrupted while the receiver restarts on the new filter." disabled>Next filter <kbd>f</kbd></button>
+                </div>
                 <div role="tabpanel" id="pane-calibrate" aria-labelledby="menu-calibrate" hidden>
                   <h2>CALIBRATE</h2>
                   <dl class="readouts"><div><dt>Calibration</dt><dd data-value="calibrate">—</dd></div></dl>
-                  <p class="hint">On the ground only. Video stops for up to two minutes; switch the VTX off for the best result.</p>
-                  <p>Calibration runs only when requested. A brief warning appears when repeated measurements show a poor baseline.</p>
+                  <p class="hint">On the ground only; video stops while it runs. Calibrate receiver (QUICK in the goggles) checks this filter and its DC rows in about 30 seconds. Full RF optimization (FULL) checks every filter in 1–2 minutes with the VTX switched off.</p>
+                  <p>Calibration runs only when requested; the receiver never sweeps by itself at boot. During normal reception it trims the DC of every gain row live. A warning (CALIBRATION RECOMMENDED, or DC CAL! in the menu) appears only when repeated measurements show a row it cannot hold.</p>
                   <button type="button" class="command-button" data-command="F" data-hint="Calibrate this filter on the ground? Live video stops while its DC rows are checked and repaired. VTX off measures all gains." disabled>Calibrate receiver <kbd>F</kbd></button>
-                  <button type="button" class="command-button" data-command="B" data-hint="Run full RF optimization on the ground? Searches every filter setting and prepares all filter profiles. Video stops; allow up to eight minutes." disabled>Full RF optimization <kbd>B</kbd></button>
+                  <button type="button" class="command-button" data-command="B" data-hint="Run full RF optimization on the ground with the VTX off? Searches every filter setting and prepares all filter profiles. Video stops for 1–2 minutes." disabled>Full RF optimization <kbd>B</kbd></button>
                   <div class="calibration-report">
                     <h3>Share calibration data</h3>
                     <p>Download a report to send to the C5VRX team. Reading it does not calibrate or change settings. Connect the receiver below first.</p>
@@ -370,16 +408,22 @@
                   <p class="hint">Cycles 0.5x to 5.0x in 0.5x steps. Verified changes are saved and restored at boot; the default is 1.0x. Higher levels can clip: check sync and white into 75 ohm.</p>
                   <button type="button" class="command-button" data-command="g" data-hint="Cycle OUTPUT 0.5 to 5.0x in 0.5x steps? Higher levels may clip video. Successful changes are saved for reboot." disabled>Next output level <kbd>g</kbd></button>
                 </div>
+                <div role="tabpanel" id="pane-decoder" aria-labelledby="menu-decoder" hidden>
+                  <h2>DECODER</h2>
+                  <dl class="readouts"><div><dt>Active</dt><dd data-value="demod">—</dd></div></dl>
+                  <p class="hint">D32-R2 is the default, chosen after a goggle check; a board capture measured less colour noise than with U50P64-R1. U50P64-R1 is aimed at weak signals (host model) and falls back to U80P64-R1 on a VTX with wide deviation; U80P64-R1 and U85Q stay available for comparison. Cycles U80P64-R1 → U85Q → U50P64-R1 → D32-R2. Every change is a verified restart (video stops briefly) and is kept across reboots. In the goggles: EXPERIMENTAL › DEMOD. Requires firmware advertising m in its help.</p>
+                  <button type="button" class="command-button" data-command="m" data-hint="Switch to the next decoder? Video stops briefly while the receiver restarts and verifies it." disabled>Next decoder <kbd>m</kbd></button>
+                </div>
                 <div role="tabpanel" id="pane-gain" aria-labelledby="menu-gain" hidden>
                   <h2>RX GAIN</h2>
                   <dl class="readouts"><div><dt>Mode</dt><dd data-value="gainMode">—</dd></div><div><dt>Active gain</dt><dd data-value="gain">—</dd></div></dl>
-                  <p class="hint">LEVEL (the default) picks the gain row with the measured demodulator quality at the received level, so the gain holds still through fading and moves at once on a jump. Cycle LEVEL → KEEL (the older KEEL-1 peak AGC) → RSSI → MAX → fixed G78..G24. LEVEL/KEEL/RSSI are kept across reboots; MAX and fixed gains last for this session. Requires firmware advertising G in its help.</p>
+                  <p class="hint">LEVEL (the default) picks the gain row with the measured demodulator quality at the received level, so the gain holds still through fading and moves at once on a jump. Cycle LEVEL → KEEL (the older KEEL-1 peak AGC) → RSSI → MAX → fixed G78..G24. LEVEL/KEEL/RSSI are kept across reboots; MAX and fixed gains last for this session. Behind an external LNA, LEVEL stops at the highest gain row that still adds signal (EXPERIMENTAL › LEVEL TOP). In the goggles: EXPERIMENTAL › GAIN. Requires firmware advertising G in its help.</p>
                   <button type="button" class="command-button" data-command="G" data-hint="Cycle LEVEL / KEEL / RSSI / MAX / fixed receive gain. MAX and fixed gains last for this session." disabled>Change gain mode <kbd>G</kbd></button>
                 </div>
                 <div role="tabpanel" id="pane-dac" aria-labelledby="menu-dac" hidden>
                   <h2>DAC SELF-TEST</h2>
                   <dl class="readouts"><div><dt>Current step</dt><dd data-value="dac">—</dd></div></dl>
-                  <p class="hint">Bench only. The first press opens a test pattern in the goggles: the ramp should be smooth and the six bars should gain contrast from D4 to D9. Each further press holds one pin high as a flat level for a multimeter (the display loses its picture). Unplug the display and measure CVBS to GND at each step, then run <code>tools/dac_check.py</code>. Requires firmware advertising Z in its help.</p>
+                  <p class="hint">Bench only. The first press opens a test pattern in the goggles: the ramp should be smooth and the six bars should gain contrast from D4 to D9. Each further press holds one pin high as a flat level for a multimeter (the display loses its picture). Unplug the display and measure CVBS to GND at each step, then run <code>tools/dac_check.py</code>. In the goggles: EXPERIMENTAL › DAC TEST. Requires firmware advertising Z in its help.</p>
                   <button type="button" class="command-button" data-command="Z" data-hint="Show the DAC test pattern, then step through the multimeter levels. Live video stops; bench only." disabled>Pattern / next step <kbd>Z</kbd></button>
                 </div>
                 <div role="tabpanel" id="pane-exit" aria-labelledby="menu-exit" hidden>
@@ -419,7 +463,7 @@
                 <div><dt>Live VTX matching</dt><dd data-value="liveProfile">—</dd></div>
                 <div><dt>Profile</dt><dd data-value="profile">—</dd></div>
               </dl>
-              <p class="hint">Test on the ground. U80P64-R1 uses one fixed demodulator table; live VTX matching changes the analog filter, not kp or LP. Live OUTPUT, format and profile changes share a five-second firmware cooldown.</p>
+              <p class="hint">Test on the ground. Live VTX matching changes only the analog filter. Live OUTPUT, decoder, filter and profile changes are verified restarts and share a five-second firmware cooldown. Further experiments (AUTO OUTPUT, STRONG LANE, LOW DC, the D10 sample clock and more) are in the goggles under EXPERIMENTAL; the menu shows EXP while any of them is not on its default.</p>
               <div class="command-buttons">
                 <button type="button" class="command-button" data-command="A" data-hint="Toggle automatic live VTX profile switching for this session? Each boot starts report-only; profile changes can briefly interrupt video." disabled>Toggle live VTX matching <kbd>A</kbd></button>
                 <button type="button" class="command-button" data-command="L" data-hint="Run the bench-only IQ lane comparison? Live video stops for about three seconds." disabled>Compare IQ lanes <kbd>L</kbd></button>
@@ -465,61 +509,90 @@
         <p class="hint">Connecting the terminal releases the flasher and the other way round; they never share the port. The menu updates by itself while the receiver is connected.</p>
       </section>
 
-      <section class="project-info" id="about" aria-labelledby="aboutTitle">
-        <h2 id="aboutTitle">What is C5VRX?</h2>
-        <p>C5VRX turns an ESP32-C5 into a 5.8 GHz analog FPV video receiver. It is an open-source project by Twotoz and the C5VRX contributors.</p>
-        <p>The basic idea is simple: solder one resistor to each of six GPIO pins, then join the other ends together. That connection is your AV video output for analog goggles or a monitor. Follow the wiring guide below and <a href="#safety">ground-test your setup</a>.</p>
-        <h3>Build and flash an ESP32-C5 FPV receiver</h3>
-        <p><strong>Perfboard is the easiest way to build it for now, until a C5VRX DIY kit is available.</strong> Start with a Seeed Studio XIAO ESP32-C5 and the six GPIO resistors. Add a 200 Ω resistor from the joined output to GND, and connect your goggles’ or monitor’s video input and ground. The <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#hardware" target="_blank" rel="noopener noreferrer">wiring guide</a> shows exactly which pins and resistor values to use. Then install the firmware with the <a href="#tools">USB web flasher</a>.</p>
-        <h3>Open-source firmware and receiver research</h3>
-        <p>The <a href="https://github.com/Twotoz/C5VRX" target="_blank" rel="noopener noreferrer">C5VRX GitHub repository</a> includes GPL-3.0-only firmware, schematics, host tests and documented experiments. Read the <a href="https://github.com/Twotoz/C5VRX/blob/main/docs/FINDINGS.md" target="_blank" rel="noopener noreferrer">receiver findings</a> for the evidence and limits of each change, or join the project’s Discord from the link above to share builds and test results.</p>
-      </section>
 
-      <section class="project-info" id="diy-kit" aria-labelledby="diyKitTitle">
-        <h2 id="diyKitTitle">C5VRX DIY kit — in development</h2>
-        <p>A DIY receiver board in a Fat Shark-style module form factor, designed to make your C5VRX build easier. These 3D previews show the upcoming kit design. <strong>Not available to buy yet.</strong> For now, perfboard is the easiest way to build your receiver.</p>
-        <div class="kit-preview">
-          <figure>
-            <img src="assets/c5vrx-diy-kit.jpg" alt="Angled 3D preview of the upcoming C5VRX DIY kit board with resistors and a XIAO mounting area" width="1200" height="789" loading="lazy" decoding="async">
-            <figcaption>Upcoming C5VRX DIY kit · 3D preview</figcaption>
-          </figure>
-          <figure>
-            <img src="assets/c5vrx-diy-kit-top.webp" alt="Top view of the upcoming C5VRX DIY kit board showing the XIAO mounting area and video, ground and 5 V connections" width="1200" height="789" loading="lazy" decoding="async">
-            <figcaption>Top view · design in development</figcaption>
-          </figure>
-        </div>
-      </section>
+      <section class="project-info hardware-section" id="hardware" aria-labelledby="hardwareTitle">
+        <h2 id="hardwareTitle">Get the hardware</h2>
+        <p>Two ways to a C5VRX receiver: buy a ready-made module, or build your own from a XIAO ESP32-C5 and six resistors. Both run the same firmware from the <a href="#tools">USB web flasher</a>.</p>
 
-      <h2 id="hardware" class="section-title hardware-heading">Hardware for a DIY C5VRX receiver</h2>
-      <aside class="hardware-purchase" aria-label="Get the hardware">
-        <div class="hardware-photo"><img src="assets/xiao-esp32c5.png" alt="Seeed Studio XIAO ESP32-C5 board" width="320" height="240" loading="lazy"></div>
-        <div class="hardware-copy">
-          <p class="hardware-title">Buy your XIAO ESP32-C5 here</p>
-          <a class="amazon-button" href="https://link.amazon/B0gopCVDt" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy XIAO ESP32-C5 on Amazon">Buy on Amazon</a>
+        <div class="hardware-option module-card" id="module" aria-labelledby="moduleTitle">
+          <p class="option-label">Option 1 · Ready-made</p>
+          <h3 id="moduleTitle">C5VRX receiver module</h3>
+          <div class="module-gallery">
+            <figure>
+              <img src="assets/c5vrx-module.jpg" alt="C5VRX receiver module with a Seeed Studio XIAO ESP32-C5, antenna and video connector, next to a small FPV drone" width="1200" height="800" loading="lazy" decoding="async">
+              <figcaption>The module next to a micro drone</figcaption>
+            </figure>
+            <figure>
+              <img src="assets/c5vrx-module-goggles.jpg" alt="C5VRX receiver module installed in the module bay of Fat Shark goggles" width="1200" height="800" loading="lazy" decoding="async">
+              <figcaption>Installed in Fat Shark goggles</figcaption>
+            </figure>
+          </div>
+          <div class="module-offer">
+            <a class="seller-logo" href="https://fpvgate.xyz/shop" target="_blank" rel="noopener noreferrer" aria-label="FPVGate shop">
+              <img src="assets/fpvgate-logo.png" alt="FPVGate.xyz — Affordable Lap Timing" width="720" height="381" loading="lazy" decoding="async">
+              <img class="seller-logo-spin" src="assets/fpvgate-logo-spin.png" alt="" width="257" height="257" loading="lazy" decoding="async">
+            </a>
+            <div class="module-copy">
+              <p>FPVGate sells a ready-made C5VRX receiver module. Flash it with the <a href="#tools">USB web flasher</a> and connect your goggles or monitor. Check the shop for what is included.</p>
+              <a class="seller-button" href="https://fpvgate.xyz/shop" target="_blank" rel="noopener noreferrer">Buy from FPVGate</a>
+              <p class="seller-note">FPVGate is an independent third-party seller. Send questions about orders, shipping, payment, returns or the module hardware to FPVGate, not to the C5VRX project.</p>
+            </div>
+          </div>
         </div>
-      </aside>
-      <div class="hardware-extras" role="group" aria-label="Build components">
-        <article class="hardware-extra">
-          <img src="assets/perfboard.png" alt="Green perfboard" width="125" height="182" loading="lazy">
-          <div class="hardware-copy">
-            <p class="hardware-title">Perfboard</p>
-            <a class="amazon-button" href="https://link.amazon/B0i2qqMeq" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy perfboard on Amazon">Buy on Amazon</a>
+
+        <div class="hardware-option" aria-labelledby="diyTitle">
+          <p class="option-label">Option 2 · Build it yourself</p>
+          <h3 id="diyTitle">DIY build components</h3>
+          <p>Solder one resistor to each of six GPIO pins, join the other ends and add 200 Ω to GND. The <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#hardware" target="_blank" rel="noopener noreferrer">wiring guide</a> lists the pins and values.</p>
+          <div class="product-grid" role="group" aria-label="Build components">
+            <article class="product-card">
+              <div class="product-photo"><img src="assets/products/xiao-esp32c5.webp" alt="Seeed Studio XIAO ESP32-C5 board" width="320" height="320" loading="lazy" decoding="async"></div>
+              <h4>XIAO ESP32-C5</h4>
+              <p>The receiver itself: Seeed Studio’s ESP32-C5 board with an IPX antenna connector.</p>
+              <a class="amazon-button" href="https://link.amazon/B0gopCVDt" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy XIAO ESP32-C5 on Amazon">Buy on Amazon</a>
+              <a class="store-button" href="https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C5-p-6609.html" target="_blank" rel="noopener noreferrer" aria-label="Buy XIAO ESP32-C5 from Seeed Studio">Buy from Seeed</a>
+            </article>
+            <article class="product-card">
+              <div class="product-photo"><img src="assets/products/perfboard.webp" alt="Green perfboard" width="320" height="320" loading="lazy" decoding="async"></div>
+              <h4>Perfboard</h4>
+              <p>Holds the XIAO and the resistor network.</p>
+              <a class="amazon-button" href="https://link.amazon/B0i2qqMeq" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy perfboard on Amazon">Buy on Amazon</a>
+            </article>
+            <article class="product-card">
+              <div class="product-photo"><img src="assets/products/resistor-kit.webp" alt="Resistor assortment in a storage case" width="320" height="320" loading="lazy" decoding="async"></div>
+              <h4>Resistor kit</h4>
+              <p>An assortment for the six DAC resistors and the 200 Ω load; check the values against the wiring guide.</p>
+              <a class="amazon-button" href="https://link.amazon/B06XSBkln" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy resistor kit on Amazon">Buy on Amazon</a>
+            </article>
           </div>
-        </article>
-        <article class="hardware-extra">
-          <img src="assets/resistor-kit.png" alt="Resistor assortment in a storage case" width="500" height="500" loading="lazy">
-          <div class="hardware-copy">
-            <p class="hardware-title">Resistor kit</p>
-            <a class="amazon-button" href="https://link.amazon/B06XSBkln" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy resistor kit on Amazon">Buy on Amazon</a>
+        </div>
+
+        <div class="hardware-option" aria-labelledby="lnaTitle">
+          <p class="option-label">Optional · More range</p>
+          <h3 id="lnaTitle">External LNA</h3>
+          <p>A low-noise amplifier between the antenna and the XIAO, tested with the Zeenko ZK06-UM. Wire antenna → LNA → pigtail → the XIAO’s IPX connector. No setting is needed: the firmware measures its own noise and adapts its gain. See the <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#optional-external-lna-more-range" target="_blank" rel="noopener noreferrer">LNA notes</a>.</p>
+          <div class="product-grid" role="group" aria-label="Optional range components">
+            <article class="product-card">
+              <div class="product-photo"><img src="assets/products/zeenko-zk06-um-lna.webp" alt="Zeenko ZK06-UM LNA" width="320" height="320" loading="lazy" decoding="async"></div>
+              <h4>Zeenko ZK06-UM LNA</h4>
+              <p>10 MHz–6 GHz, SMA. Datasheet at 5.8 GHz: ~22.6 dB gain, ~1.0 dB noise figure.</p>
+              <a class="amazon-button" href="https://link.amazon/B0iY2ccnV" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy Zeenko ZK06-UM LNA on Amazon">Buy on Amazon</a>
+            </article>
+            <article class="product-card">
+              <div class="product-photo"><img src="assets/products/ipx-to-sma-pigtail.webp" alt="IPX to SMA pigtail cables" width="320" height="320" loading="lazy" decoding="async"></div>
+              <h4>IPX to SMA pigtail</h4>
+              <p>Connects the LNA output to the XIAO’s IPX (U.FL) antenna connector.</p>
+              <a class="amazon-button" href="https://link.amazon/B07pMkNyf" target="_blank" rel="sponsored noopener noreferrer" aria-describedby="affiliateDisclosure" aria-label="Buy IPX to SMA pigtail on Amazon">Buy on Amazon</a>
+            </article>
           </div>
-        </article>
-      </div>
-      <p class="affiliate-note" id="affiliateDisclosure">Affiliate links. As an Amazon Associate, I earn from qualifying purchases. All affiliate earnings go back into C5VRX development.</p>
+        </div>
+        <p class="affiliate-note" id="affiliateDisclosure">Amazon links are affiliate links. As an Amazon Associate, I earn from qualifying purchases. All affiliate earnings go back into C5VRX development. The FPVGate and Seeed Studio links are not affiliate links.</p>
+      </section>
       <section class="project-faq" id="faq" aria-labelledby="faqTitle">
         <h2 id="faqTitle">Frequently asked questions</h2>
         <details>
           <summary>What hardware do I need for C5VRX?</summary>
-          <p>A Seeed Studio XIAO ESP32-C5, six resistors for the GPIO pins, one 200 Ω resistor to GND, an antenna and a connection to your goggles’ or monitor’s AV input. Perfboard makes assembly easier while we wait for a C5VRX DIY kit. Follow the <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#hardware" target="_blank" rel="noopener noreferrer">wiring guide</a> for the pins, resistor values and connections.</p>
+          <p>A Seeed Studio XIAO ESP32-C5, six resistors for the GPIO pins, one 200 Ω resistor to GND, an antenna and a connection to your goggles’ or monitor’s AV input. Perfboard makes assembly easier. A <a href="#module">ready-made receiver module</a> is also available from an independent seller. Follow the <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#hardware" target="_blank" rel="noopener noreferrer">wiring guide</a> for the pins, resistor values and connections.</p>
         </details>
         <details>
           <summary>Does C5VRX receive analog PAL and NTSC FPV video?</summary>
@@ -533,6 +606,24 @@
           <summary>Is C5VRX qualified for flight?</summary>
           <p>C5VRX is experimental. Passing tests or installing a versioned release does not establish flight safety or guarantee range. Read the <a href="#safety">safety and warranty disclaimer</a>, complete calibration and ground-test every firmware and hardware/settings combination.</p>
         </details>
+      </section>
+      <section class="project-info" id="about" aria-labelledby="aboutTitle">
+        <h2 id="aboutTitle">What is C5VRX?</h2>
+        <p>C5VRX turns an ESP32-C5 into a 5.8 GHz analog FPV video receiver. It is an open-source project by Twotoz and the C5VRX contributors.</p>
+        <p>The basic idea is simple: solder one resistor to each of six GPIO pins, then join the other ends together. That connection is your AV video output for analog goggles or a monitor. Follow the <a href="#hardware">hardware section</a> and <a href="#safety">ground-test your setup</a>.</p>
+        <h3>Build and flash an ESP32-C5 FPV receiver</h3>
+        <p><strong>Build it yourself on perfboard, or get a <a href="#module">ready-made receiver module</a>.</strong> For a perfboard build, start with a Seeed Studio XIAO ESP32-C5 and the six GPIO resistors. Add a 200 Ω resistor from the joined output to GND, and connect your goggles’ or monitor’s video input and ground. The <a href="https://github.com/Twotoz/C5VRX/blob/main/README.md#hardware" target="_blank" rel="noopener noreferrer">wiring guide</a> shows exactly which pins and resistor values to use. Then install the firmware with the <a href="#tools">USB web flasher</a>.</p>
+        <h3>What the current C5VRX-5 firmware does</h3>
+        <ul class="feature-list">
+          <li><strong>D32-R2 decoder by default.</strong> Chosen after a goggle check for cleaner colour. U50P64-R1, U80P64-R1 and U85Q remain selectable for comparison.</li>
+          <li><strong>LEVEL gain control.</strong> Picks the gain row with the best measured picture quality for the received level, holds still through fading and reacts at once to a sudden jump. It also adapts to an external LNA.</li>
+          <li><strong>Calibration only when you ask.</strong> Boot uses saved settings with no RF sweep; the receiver trims DC live and only recommends calibration when it cannot hold a row.</li>
+          <li><strong>Built-in flight log.</strong> Records picture quality, signal, gain, DC and dropouts for every session. Read it in the browser below.</li>
+          <li><strong>EXPERIMENTAL menu.</strong> Field tests in the goggle menu, such as AUTO OUTPUT and the D10 sample clock (both off by default).</li>
+        </ul>
+        <p>The receiver runs and holds video on the test boards; its range has not been measured yet.</p>
+        <h3>Open-source firmware and receiver research</h3>
+        <p>The <a href="https://github.com/Twotoz/C5VRX" target="_blank" rel="noopener noreferrer">C5VRX GitHub repository</a> includes GPL-3.0-only firmware, schematics, host tests and documented experiments. Read the <a href="https://github.com/Twotoz/C5VRX/blob/main/docs/FINDINGS.md" target="_blank" rel="noopener noreferrer">receiver findings</a> for the evidence and limits of each change, or join the project’s Discord from the link above to share builds and test results.</p>
       </section>
     </main>
     <footer>C5VRX by Twotoz and the C5VRX contributors · <a href="https://github.com/Twotoz/C5VRX/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">GPL-3.0-only</a> · <a href="#safety">Safety &amp; warranty</a></footer>

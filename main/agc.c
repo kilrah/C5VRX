@@ -162,11 +162,31 @@ static void row_noise(agc_level_t *a, unsigned k)
     a->noise_x16[k] = (uint16_t)(n < 1.0f ? 1.0f : n > 65535.0f ? 65535.0f : n);
 }
 
+/* Survival row: a carrier at or under LEVEL_EDGE_CN_DB over the receiver noise
+ * (or none at all) belongs on the top row. There the measured table is flat
+ * within ~1 dB from 1.25 to 7 cells (level_quality_grid.py), so the rows under
+ * the top scored as well as it and LEVEL waited one or two home rows down
+ * (board 2026-10-29: G79 with no carrier; host edge scenarios G76-G79). The
+ * top row cannot fold there (C/N 6 dB at 4.8 cells^2 of noise is 4.9 cells
+ * rms) and it is the known high-gain state a returning carrier is met in
+ * (AGENTS.md control-work principles), so every lower home scores under it by
+ * its distance: no write at the edge unless the level really rose. */
+#ifndef LEVEL_EDGE_CN_DB
+#define LEVEL_EDGE_CN_DB 6
+#endif
 static void home_quality(agc_level_t *a, unsigned h)
 {
-    for (int b = 0; b < AGC_BINS; ++b)
-        a->quality[h][b] = (int8_t)quality(AGC_LMIN_DB + (b + 0.5f) * AGC_BIN_DB - a->target_db, a->rel_q8[a->home[h]] / 256.0f,
-                                           a->noise_top_x16 / 16.0f);
+    const float noise_top = a->noise_top_x16 / 16.0f;
+    const float edge_db = 10.0f * log10f(noise_top > 0.01f ? noise_top : 0.01f) + LEVEL_EDGE_CN_DB;
+    for (int b = 0; b < AGC_BINS; ++b) {
+        const float level = AGC_LMIN_DB + (b + 0.5f) * AGC_BIN_DB - a->target_db;
+        int q = quality(level, a->rel_q8[a->home[h]] / 256.0f, noise_top);
+        if (LEVEL_EDGE_CN_DB > -100 && h && level <= edge_db) {
+            const int top = quality(level, a->rel_q8[a->home[0]] / 256.0f, noise_top) - (int)h;
+            if (q > top) q = top;
+        }
+        a->quality[h][b] = (int8_t)(q < -128 ? -128 : q);
+    }
 }
 
 void agc_level_options(agc_level_t *a, bool radius, uint32_t memory_us, int target_db, unsigned release)
@@ -178,6 +198,19 @@ void agc_level_options(agc_level_t *a, bool radius, uint32_t memory_us, int targ
     for (unsigned h = 0; h < a->homes; ++h) home_quality(a, h);
 }
 
+/* The survival row (home_quality) assumes the receiver noise alone cannot
+ * fold the top row: 4.8 cells^2 is 2.2 cells rms on the bare board, 7 cells^2
+ * at 5865 MHz (rx_level.h: 1.7 dB over the calibration). Behind an external
+ * LNA the noise at G83 is ~17 dB higher (board 2026-11-14, ~21 dB LNA: ~270
+ * cells^2, 16 cells rms): with the homes from G83 LEVEL held G72 with the VTX
+ * off and folded in 5155 of 5239 decisions, the noise read as a carrier. The
+ * homes start at the highest row whose noise stays under 9 cells^2 (3 cells
+ * rms, the low end of the table's best radius and 1 dB over the bare A1
+ * noise): bare boards keep G83, behind that LNA it is ~G67, where KEEL-1
+ * settled on its own (G65-G67). More gain there adds no C/N, only folds. */
+static uint16_t s_top_noise_x16 = LEVEL_TOP_NOISE_MAX_X16;
+void agc_level_set_top_noise(uint16_t noise_max_x16) { s_top_noise_x16 = noise_max_x16 ? noise_max_x16 : LEVEL_TOP_NOISE_MAX_X16; }
+uint16_t agc_level_top_noise(void) { return s_top_noise_x16; }
 void agc_level_reset(agc_level_t *a, const int16_t row_db_q8[DG_STATES], uint8_t max_index, uint16_t noise_top_x16)
 {
     memset(a, 0, sizeof(*a));
@@ -189,7 +222,10 @@ void agc_level_reset(agc_level_t *a, const int16_t row_db_q8[DG_STATES], uint8_t
         a->rel_q8[k] = (int16_t)(row_db_q8[k] - row_db_q8[max_index]);
         row_noise(a, k);
     }
-    a->homes = (uint8_t)build_homes(a->home, row_db_q8, max_index);
+    int top = max_index;
+    while (top > 0 && a->noise_x16[top] > s_top_noise_x16) --top;
+    a->top_index = (uint8_t)top;
+    a->homes = (uint8_t)build_homes(a->home, row_db_q8, (uint8_t)top);
     for (unsigned h = 0; h < a->homes; ++h) home_quality(a, h);
 }
 
@@ -339,7 +375,11 @@ uint8_t agc_level_tick(agc_level_t *a, const dg_observation_t *o, uint8_t curren
         a->hist[b] = (uint32_t)(((uint64_t)a->hist[b] * decay) >> 8);
         a->fast[b] = (uint32_t)(((uint64_t)a->fast[b] * LEVEL_FAST_DECAY_Q8) >> 8);
     }
-    if (best == cur_h || best_u <= cur_u + LEVEL_HYST * 256) return current;
+    /* Over the top home (behind an LNA, LEVEL_TOP_NOISE_MAX_X16) no row is
+     * home: the noise alone folds there, so go to the best home without the
+     * hysteresis (its nearest home would read as "already there"). */
+    const bool above_top = current > a->top_index;
+    if (!above_top && (best == cur_h || best_u <= cur_u + LEVEL_HYST * 256)) return current;
     ++a->moves;
     a->move_pending = a->level_windows >= 4u;
     if (a->move_pending) {

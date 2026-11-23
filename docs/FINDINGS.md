@@ -1,5 +1,338 @@
 # C5VRX-5 findings
 
+## Colour dots, the frame sweep and D32-R2 (2026-11-15, board capture + host)
+
+C5VRX by Twotoz and the C5VRX contributors. Operator report: coloured dots
+in the picture whatever the decoder. This extends the U50P64-R1/U85Q decoder
+work and LEVEL on the measured demod quality.
+
+**A whole frame from IQ snapshots.** Console `J` (PSRAM build,
+`sdkconfig.psram.defaults`) takes one 8190-byte snapshot per video frame,
+each 150 us later in the frame, timed on an RX descriptor boundary (~1 us),
+kept in PSRAM and printed afterwards (~8 s of VTX). `tools/frame_sweep.py`
+captures and rebuilds; `tools/frame_puzzle.py` combines several sweeps:
+fitted line period, a line lock on each line's own H-sync, the sweeps aligned
+on the picture, per line piece the snapshot that agrees best, NTSC colour from
+each line's burst. Three sweeps (605 snapshots) gave a 98 % complete frame
+(room, OSD) for every decoder on exactly the same IQ.
+
+**Same IQ, flat picture, 5 MHz:**
+
+| decoder | colour noise (IRE) | luma grain (IRE) | sync-tip noise (IRE) | burst/sync |
+| --- | ---: | ---: | ---: | ---: |
+| U50P64-R1 | 3.06 | 4.11 | 7.08 | 0.57 |
+| U80P64-R1 | 2.66 | 4.58 | | 0.71 |
+| U85Q | 2.16 | 4.53 | | 0.75 |
+| **D32-R2** | **1.80** | 4.41 | | 0.82 |
+| float discriminator, all samples | 1.37 | 4.44 | 4.72 | 0.84 |
+| Kalman/RTS smoother on the exact cell arcs (`research/pc_demod.py`) | 1.38 | 4.55 | 4.50 | 0.84 |
+
+- U50P64-R1's loop (gain 0.5) passes 0.62 at 3.58 MHz on a clean carrier;
+  the goggle's ACC turns the weak burst up and the noise with it, and its
+  16 phase sectors leave a structured pattern. That is most of the dots.
+- The output word adds almost nothing (the float discriminator rounded to
+  the six-bit word: 1.42; to a 625 kHz advance lattice: 1.47). No offline
+  demodulator beats 1.37: the rest is in the IQ. On flat stretches the
+  noise does not grow with the carrier's frequency (-2.5..+2.5 MHz:
+  135-182 kHz rms), so it is not a sampling-phase error; the host model puts
+  ~3.0 IRE of the sync-tip noise on 4-bit quantisation and ~3.8 IRE on
+  carrier phase noise (5-bit IQ: -15 %, perfect IQ: -19 %).
+- Loop gain alone (16 or 32 sectors, 0.5-1.0) and an error-dependent gain
+  (`research/nl_tracker.py` build_lut) stay at 2.1-2.8. The sharpest
+  difference the two lookups can make, sample A's angle in 32 sectors against
+  the previous one (D32), reaches 1.80. Its edge was weak (host lock at
+  -2 dB C/N 0.18 / 0.07 for deviation 0.7 / 1.0 against 0.63 / 0.57 for
+  U50P64-R1).
+- D32-R2 adds click suppression: a phase step outside -110..+135 degrees per
+  50 ns (more than a composite carrier can move) moves the state only 0.7 of
+  the way. Colour noise stays 1.80. Host model (4 PAL/NTSC cases, lock /
+  luma SINAD):
+
+| C/N | dev 0.7 U50 | dev 0.7 D32-R2 | dev 1.0 U50 | dev 1.0 D32-R2 | dev 1.4 U50 | dev 1.4 D32-R2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| -2 dB | 0.63 / -6.0 | 0.60 / -8.5 | 0.57 / -5.4 | 0.22 / -6.6 | | |
+| 0 dB | 0.96 / -3.5 | 0.96 / -6.5 | 0.95 / -3.1 | 0.96 / -4.6 | 0.88 / -4.8 | 0.84 / -3.8 |
+| 4 dB | 1.00 / 2.2 | 1.00 / -1.6 | 1.00 / 3.3 | 1.00 / 1.1 | 1.00 / -2.0 | 1.00 / 1.9 |
+| 9 dB | 1.00 / 6.3 | 1.00 / 3.6 | 1.00 / 8.4 | 1.00 / 6.4 | 1.00 / 1.3 | 1.00 / 8.4 |
+
+**LEVEL radius.** On a strong carrier the measured LEVEL table
+(`level_quality.py`) counted luma SINAD only up to 12 dB, so every radius from
+2.5 to 7 cells scored 96-100 and its maximum sat at 3.0 cells. On a flat field
+(`research/strong_grain.py`, C/N 35 dB, deviation 0.68) D32-R2 reads 22.1 /
+24.3 / 28.9 dB at 2.5 / 4.0 / 5.5 cells and U50P64-R1 26.3 / 25.2 / 28.1:
+both are best at 5.5-6 cells, D32-R2 up to ~7 dB worse under ~4. From the
+15 dB grid row up, `level_quality.py` now subtracts the grain SNR under each
+row's best radius at the SINAD term's own slope (3.33 units per dB); rows
+under 15 dB, where range is decided, are bit-identical. At 32 dB the table
+reads 87-88 for 2.5-4.0 cells and 100 at 5.5.
+
+**Decision (operator, 2026-11-15):** D32-R2 is the default decoder. On the
+goggle: "flink beter" (D32 without click suppression; D32-R2 has the same
+strong-signal table). Open: a range walk D32-R2 against U50P64-R1; the luma
+just above the edge is grainier in the model; the LEVEL radius change is host
+only. A C/N-switched decoder pair was built and dropped (operator: no decoder
+switching). The remaining noise is in the IQ: the operator holds it to be the
+C5, not the camera or VTX; a clean reference source would settle it.
+
+## Edge window: sync-tip room, U50 default, lanes and DC (2026-11-10, host only)
+
+C5VRX by Twotoz and the C5VRX contributors. Operator question: where can the
+firmware still gain much range, looked at afresh. This extends AUTO OUTPUT
+and U50P64-R1 (PR #301, the section below), the LEVEL walks ("Video follows
+the gain, not the walking"), the lane work of C5VRX-3/4
+(`legacy/c5vrx4/LANE_HANDOVER.md`, `ULTRAFINE_TEST.md`) and IQLaneFusion
+(`research/iq_lane_fusion.py`, whose exact ADC bit model the studies use).
+**Nothing here was flashed or measured on a board.** C/N in this section is
+the carrier over the noise after the 12 MHz filter.
+
+**Reading.** The static threshold already sits where the bit-exact model puts
+it (-92 dBm on 2026-10-20), so the decoder table and the noise floor hold
+little. The gap is static against walking (-92 against -85..-88 dBm), and the
+walks tie it to the gain: 16 points of video while the gain moves, 14 folds a
+second above -78 dBm, edge rows on template DC.
+
+**AUTO OUTPUT cut the noise under the sync tip (fixed).** The affine word put
+the tip on DAC code 3. At the edge the receiver noise and the FM clicks reach
+far under the tip; cut on one side, the low-passed tip rises towards the
+porch and the sync slicer loses lines that OUTPUT 1.0x still shows.
+`research/output_tip_headroom.py` (bit-exact decoders, the firmware's integer
+output word, the goggle model; the word a strong signal would have set, held
+at the edge as the policy does; four seeds), lines kept, NTSC deviation 0.7:
+
+| decoder | C/N | 1.0x | tip 3 | tip 10 | tip 16 | tip 20 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| U80P64-R1 | 0 dB | 0.46 | 0.03 | 0.40 | 0.56 | 0.52 |
+| U80P64-R1 | 1 dB | 0.69 | 0.40 | 0.82 | 0.70 | 0.71 |
+| U80P64-R1 | 2 dB | 0.92 | 0.51 | 0.93 | 0.91 | 0.92 |
+| U50P64-R1 | 0 dB | 0.46 | 0.02 | 0.26 | 0.40 | 0.57 |
+| U50P64-R1 | 1 dB | 0.54 | 0.37 | 0.69 | 0.73 | 0.74 |
+| U50P64-R1 | 2 dB | 0.71 | 0.68 | 0.73 | 0.69 | 0.75 |
+
+From 3 dB every word keeps 0.97 or more. `OUTPUT_AFFINE_TIP` is now 16 and
+the span 44 codes (peak white still on code 60): deviation 0.69 gets 2.25x
+(sync 5.5 -> 12.4 codes, was 2.88x), deviation 1.0 1.50x. PAL deviation 1.0
+at 1 dB: U80P64-R1 0.84 at 1.0x, 0.64 on tip 3, 0.75 on tip 16, 0.84 on
+tip 20; U50P64-R1 0.86, 0.72, 0.86, 0.86. The full table is
+`research/data/output_tip_headroom.json`.
+A model of one slicer; the goggle walk decides.
+
+**U50P64-R1 is the default decoder (operator decision 2026-11-10).** The
+operator prefers the lower picture noise (+2.2..2.9 dB luma SINAD at
+deviation 0.6-0.7 and C/N 0-9 dB, the section below) over line lock in the
+model. The same sweep shows the price at 1.0x, NTSC deviation 0.7: lines kept
+0.54 against 0.69 at 1 dB and 0.71 against 0.92 at 2 dB, equal at 0 dB and
+from 3 dB (four seeds; the earlier validation read the lock equal at
+deviation 0.7-1.0). PAL deviation 1.0 shows no such price: 0.86 against 0.84
+at 1 dB, 0.95 against 0.94 at 2 dB. The deviation fallback to U80P64-R1 at 1.10 stays. The
+choice moved to NVS `demod2`: a choice stored under `demod` is not read, so
+every board starts once on the new default; menu DEMOD and console `m` keep
+all three decoders. EXPERIMENTAL RESET returns to U50; the EXP marker shows
+for U85Q only (U80P64-R1 is the default's own fallback).
+
+**Lanes: one analog gain decodes 2..24 dB C/N.** `research/edge_window.py`:
+the analog gain stays on the top row (receiver noise 4.8 cells^2 on the
+ultrafine lane, 35 ADC codes rms) and only the lane changes; `ideal` places
+every level at radius 4.2 cells, a gain control without write cost. The
+decoder's token plane is the angle of the signed nibble pair, so the same
+table decodes every lane. U80P64-R1, NTSC deviation 0.7, luma SINAD in dB
+(lines kept are 0.96 or more from 2 dB on every lane but coarse at 2 dB,
+0.87):
+
+| C/N | ideal | ultrafine | fine | coarse |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 dB | -6.3 | -6.1 | -6.3 | -7.0 |
+| 6 dB | -0.6 | -0.6 | -0.9 | -2.2 |
+| 10 dB | 3.6 | 0.0 | 3.5 | 2.1 |
+| 14 dB | 6.2 | -2.9 | 6.5 | 6.2 |
+| 20 dB | 8.3 | -1.1 | -3.1 | 9.0 |
+| 24 dB | 9.0 | 2.2 | 4.1 | 9.8 |
+
+On the top row the ultrafine lane folds from about 8 dB C/N, so the gain
+must move exactly where the edge is. The fine lane holds 2-15 dB and the
+coarse lane 8-24 dB at the same analog gain, within ~0.5 dB of the ideal
+where they overlap. A lane change is a GPIO-matrix route: no analog step, no
+other DC row, no decoder restart, and the coarse lane never folds, so it
+reads the real level where a folded window reads small. Lines kept at 0 dB:
+0.51 ultrafine against 0.24 fine (two seeds), so the finer lane still wins
+the last dB.
+
+Not built, and why. The live lane change was retired on 2026-10-04
+(C5VRX-4, a decoder in lane units, before the cost of a gain write was
+measured); its mixed samples during the six route writes are not modelled
+here. On any lane but ultrafine the DC servo, the boot phase check, the drift
+service and the C/N reference are off (`experimental_transfer_active`,
+`servo_service`, `boot_phase_check`), and the noise maps are in ultrafine
+cells: an IQ LANE = FINE walk today compares a lane without its support.
+The like-for-like check that exists is GAIN CAP G79/G75 on the ultrafine lane
+(the same noise-to-fold room by analog gain, all support running).
+
+**DC in cells.** Same script, radius 4.2 cells on the ultrafine lane, luma
+SINAD against the residual DC (split over I and Q):
+
+| C/N | 0 | 0.6 | 1.0 | 1.5 | 2.0 | 3.0 cells | 2.0, token plane centred |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 dB | -3.5 | -3.7 | -4.1 | -4.7 | -5.4 | -6.7 | -5.0 |
+| 6 dB | -0.6 | -0.9 | -1.4 | -2.3 | -3.4 | -5.5 | -2.2 |
+| 9 dB | 2.7 | 2.5 | 2.1 | 1.1 | -0.2 | -3.7 | 1.9 |
+| 12 dB | 5.0 | 4.7 | 4.3 | 3.4 | 2.2 | -1.7 | 4.9 |
+
+At 3 cells the picture is gone under 9 dB (lines kept 0.04 at 4 dB, 0.16 at
+6 dB). One cell costs 0.6-0.8 dB, the servo's 0.3 cells nothing. The same
+analog DC is half as many cells on the fine lane. A token plane computed
+around the DC point recovers most of it at 9 dB and above; it needs a table
+restart per change, so it only suits a receiver with few analog rows.
+
+**Board checks that decide this** (in order): AUTO OUTPUT against 1.0x at the
+edge with the tip on 16; U50 against P64 on the same walk (`picture_pct`,
+goggle sync, colour); GAIN CAP G79/G75 against G83; raw IQ across one gain
+write (none exists), then a gain write that stays in PBUS debug mode (the
+section below, "Not done"); a lane route change on a carrier with raw IQ
+across it, before any live lane control.
+
+## Video level, range decoder, survival row and pause records (2026-11-10, host only)
+
+C5VRX by Twotoz and the C5VRX contributors. Operator question: the picture
+goes at about -85 dBm while the receiver noise reads -95 dBm in 12 MHz; can
+the firmware do better, and can it behave like a normal analog receiver?
+This extends issue #200 (manual OUTPUT, `research/output_level.py`), the
+U80P64-R1 work (PR #250, docs/P64.md), the retired kp ladder
+(`research/legacy_demod`), LEVEL (PR #266) and the "Next steps (2026-10-29)"
+below. **Nothing here was flashed or measured on a board.**
+
+**Reading of the existing evidence.**
+- -95 dBm is the noise in the 12.9 MHz noise bandwidth (C/N 0 dB), not a
+  video sensitivity; -85 dBm is C/N ~12 dB on the meter's own noise scale.
+- Edge snapshots called lost hold clean syncs through P64, U85Q and a float
+  discriminator at C/N 8.7-11 dB ("Range edge audit"), so the loss is not
+  receiver noise or the decoder table. Check here: the real U80P64-R1 table
+  on a synthetic sync/porch signal keeps the levels (-2.34 / -1.00 MHz at
+  deviation 0.68) and an ideal slicer misses 0.6 % of sync samples at
+  C/N 12 dB and 2.6 % at 6 dB.
+- The noise figure cannot be moved from firmware (PHY_NOISE_RESULTS).
+- The operator's VTX has deviation ~0.66-0.73. Above threshold the video
+  SNR follows the deviation squared: 6 dB less than the deviation 1.4 VTX of
+  the 2026-10-20 -92 dBm rating, at the same pin level.
+- The dBm meter is anchored on the 2026-10-19 calibration at 5180 MHz, from
+  before 11p and digital mode 12. It reads C/N over the receiver's own noise;
+  a loss of signal or noise figure in the current receive state would not
+  show in it. The absolute check (research/nfprobe) was not repeated.
+
+**AUTO OUTPUT** (`main/output_auto.h`, EXPERIMENTAL > AUTO OUTPUT, default
+OFF since 2026-11-14, ON before; `test/test_output_auto.c`). Operator
+decision 2026-11-14: every word it applies is a verified halted restart of
+the transport (~5 ms, ~80 lines without video), and no goggle comparison
+against 1.0x exists yet; it stays an experiment until one does. The NVS
+experiment schema went to version 2 (values OFF/ON, OFF the baseline); a
+version-1 blob keeps every other experiment and starts AUTO OUTPUT OFF.
+OUTPUT 1.0x maps -6..+9 MHz onto the 64 DAC
+codes, so a deviation 0.69 VTX uses ~19 of them and its sync is ~5.5 codes
+(issue #200 model: 0.060 V loaded against 0.286 V of CVBS; deviation 1.0:
+0.089 V). The 2026-10-12 study named what a live version needs; this is
+that policy:
+- evidence of the unscaled live decoder per control window: sync tip (3rd
+  percentile) and peak white (99.5th) of the decoded video
+  (`picture_sync.h`), sync depth from the AFC's confirmed sync and porch;
+- only windows with confirmed sync and >= 80 % of their sync pulses; batches
+  of 16, rejected on scatter; weak or missing video holds the setting;
+- the composite span is the larger of the observed tip-to-white and 3.5 x
+  the sync depth (a dark scene cannot raise the gain), its largest value
+  kept for the channel, so picture content cannot make the level hunt; the
+  gain puts it on 57 codes with the tip at code 3, at most 4.0x;
+- applied as an affine output word by the existing verified restart, guard
+  and rollback: the first setting after two agreeing batches (~2 s), down or
+  a moved tip after two, up only after four and 30 s;
+- a manual OUTPUT other than 1.0x wins; a channel or decoder change starts
+  from the manual level again.
+
+Host: deviation 0.69 gets 2.88x (sync 5.5 -> 14 codes, white at 58),
+deviation 1.0 1.88x, the issue #200 levels 2.00x, deviation 1.7 is left
+alone. No voltage is claimed: the DAC's loaded span is not calibrated.
+The flight log stores `0x80 | gain x8` as the output level and an
+`output_auto` event per change.
+
+**U50P64-R1** (`research/u50p64.py`, `main/u50p64.bsasm`, menu DEMOD and
+console m: P64 -> U85Q -> U50, never automatic, P64 stays the default). The
+U80P64-R1 formulas and program with loop gain 0.50 for video and sync. Host
+model, fresh seeds 7301-7304, PAL and NTSC, 12 MHz filter, luma SINAD against
+U80P64-R1 (`research/data/u50p64_validation.json`):
+
+| deviation | C/N 0 | 2 | 4 | 6 | 9 | 12 | 20 dB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.6 | +2.3 | +2.8 | +2.9 | +2.8 | +2.3 | +1.7 | +0.4 |
+| 0.7 | +2.2 | +2.6 | +2.7 | +2.6 | +2.0 | +1.4 | +0.1 |
+| 1.0 | +0.9 | +0.9 | +1.2 | +1.6 | +1.1 | +0.3 | -1.3 |
+| 1.2 | -0.3 | -0.9 | -1.5 | -1.7 | -1.2 | -1.1 | -1.9 |
+| 1.4 | -1.0 | -2.2 | -4.1 | -6.2 | -8.0 | -8.3 | -7.9 |
+
+Line lock is equal at deviation 0.7-1.0; at 0.6 it dipped at one point
+(0.80 against 0.99 at 2 dB). The gain is a narrower loop: a one-pole
+low-pass near 2.3 MHz, the colour subcarrier ~5-6 dB down, and at most
+5 MHz of instantaneous frequency before the loop slips. It trades detail
+and colour level for range and is wrong for a wide VTX: a session whose
+measured deviation is 1.10 or more falls back to U80P64-R1 (the stored
+choice is kept). C/N here is per 20 MHz before the filter. Tried and not
+kept: loop gain 0.45-0.60 without the sync regime (lock lost under 2 dB).
+
+**LEVEL survival row** (`main/agc.c` `LEVEL_EDGE_CN_DB`). A carrier at or
+under 6 dB C/N, or none, scores the top row highest, so LEVEL waits on the
+known high-gain row instead of one or two home rows down (board: G79 with no
+carrier). `test_agc_compare`: score 70.47 -> 70.48, writes 1.6 -> 1.7 /s,
+edge 3 dB 42.6 -> 42.6 %, with gain-model error 70.07 -> 70.04: neutral in
+the model, where the row choice hardly matters at the edge.
+
+**Pause records** (`FLOG_E_PAUSE`, T `PAUSES`). Every receiver pause is
+logged with its owner tag and duration, and counted when video was seen in
+the 3 s before it: the open point of walk 300 (11 % of the seconds owned or
+paused, owner unknown).
+
+**Not done, and why.**
+- A default noise reference from the gain model: without an exact-context
+  reference the AFC and profile decisions must read UNKNOWN (AGENTS.md).
+- A gain write that stays in PBUS debug mode. Every write leaves it
+  (`rf_set_gain`: release, vendor gain 50 for ~2 us, the chip's own DC until
+  the post-gain hook holds again; no hold when the row is banned or the
+  receiver paused). The blackbox cost is ~7 ms of picture per write, but no
+  raw IQ across one write exists; it needs a board prototype with a register
+  diff first.
+- Automatic decoder or filter selection: the kp policies stay retired and
+  the profile does not change in flight (operator decisions).
+
+**Board checks that decide this** (in order): OUTPUT AUTO against 1.0x on
+the low-deviation VTX at the edge (goggle sync, white clipping, colour);
+a fixed-gain walk against LEVEL; U50 against P64 on the same walk
+(`picture_pct`, colour); the static attenuator threshold; T `PAUSES` after
+a walk; research/nfprobe on the current receive state.
+
+## D10 sample clock and six-bit DAC (2026-10-31)
+
+Operator decision in PR #257 (2026-10-30): abandon planned 7/8-bit DAC
+support, export the sample clock on D10/GPIO10, relocate bit 2 from
+D6/GPIO11 to D3/GPIO7. This supersedes the future expansion reservations
+in the GPIO27 experiment below; the existing PCB footprints are historical.
+
+Extends C5VRX by Twotoz and contributors' PARLIO output and LAP87's FPGA
+bench report in issue #256: GPIO2 clock measured at 40.0 MHz, six lanes,
+falling-edge data/rising-edge capture, identical [D,D] pairs, luma HDMI lock.
+GPIO11 bit-2 rises one TX clock late in 5-8% of pairs in that setup.
+Those are measurements of the old GPIO2-clock builds, not proof of D10/D3.
+
+EXPERIMENTAL / Clock Pin D10 defaults OFF, persists in NVS and applies at
+boot. ON changes both TX clock and bit-2 routing together; OFF keeps the
+original six-resistor wiring. Pending changes never reroute a live or menu
+bus; the reboot indicator and console T distinguish requested/active state.
+Move the 2k branch when changing modes. Leave R8/R9 DNP and SJ2/SJ3 open.
+Both modes share the normal packaged firmware. No CPU sample pacing or
+new DSP stage: MODEM_DIAG Q4/I4 -> RX40 -> raw32K -> two-lookup TX
+BitScrambler -> six-bit composite codes, unique20 as [D,D] at TX40.
+Clock may stop during halted restarts; external capture must reacquire.
+
+Host tests cover production TX setup/error propagation and saved/active
+state across reboot, old settings migration and flight-log compatibility.
+D10/D3 electrical timing, the 25 ns observation, current-base reception,
+FPGA colour and range still require bench validation. This is an optional
+integration tap; remove its menu ID only with wire-format compatibility,
+routing, tests and documentation if no integration uses it.
+
 C5VRX-5 keeps only what the C5VRX-4 research on PR #190 (branch
 `codex/c5vrx4-pair-range`) showed to help the picture. The full study, its
 scripts and data live in that branch under `v4/docs/PICTURE_CLIFF_STUDY.md`,
@@ -400,6 +733,48 @@ also warns before flashing when the build's configuration differs from
 `sdkconfig.defaults`. Not changed here: the splash could be built after the
 receiver tasks (it already skips itself when the raster cannot be built),
 which would trade the margin against a progressive splash on some boards.
+
+## Boot-loop fix: reserve receiver memory before the splash (2026-11-08)
+
+Two supplied Web Serial captures of `5.0.573+100bf7bfa34e` on an ESP32-C5
+without PSRAM contain 14 and 15 `ESP_ERR_NO_MEM` aborts respectively at
+`receiver.c:951`, creating `gain_fast`; neither capture reaches ready.
+The 37,224-byte internal-free / 34,816-byte largest-block reading is early:
+its same status block reports output OFF, zero RX descriptors and zero
+transport-stage timings. It does not measure memory at task creation and
+cannot establish an allocator capability mismatch (`heap_largest` already
+uses INTERNAL|8BIT). These captures do not contain a successful boot or
+prove a calibration-table leak. The older boot-stage board measurements
+above establish the splash/task overlap; this fix extends that finding and
+the existing early `control_prepare()` reservation.
+
+`receiver_prepare()` now reserves the unchanged 4096/3072-byte task stacks,
+both TCBs and the gain timer before RF/driver allocations. It starts no task
+or timer. `receiver_start()` uses that storage at the existing point, after
+the optional splash takes TX; it cleans up partial task starts and returns
+failure instead of aborting. The caller closes the splash, stops TX and
+leaves USB diagnostics/download available on receiver startup failure.
+Control's command queue also uses its early reservation, avoiding a final
+heap allocation after splash entry. No stacks are reduced and no PSRAM is
+required. The normal gain, calibration and transport start ordering remains.
+
+The progressive fallback now frees excess chunks retained by a partially
+failed interlaced allocation. Interlaced remains the first choice because
+of the documented display compatibility problem with progressive output.
+Actual raster emission gives 1499/1811 interlaced descriptors (NTSC/PAL),
+versus 748/905 progressive, or 18,048/21,888 versus 9,216/11,136 reserved
+bytes in 384-byte chunks, excluding allocator overhead.
+
+Validation: the production reservation/start functions are compiled in a
+host harness with allocation, task-creation and timer-start failures. Tests
+cover reservation without starting gain, exhausted-heap startup, cleanup,
+retry and idempotence. Actual raster code plus the production reservation
+function covers partial interlaced allocation, progressive trimming and
+complete allocation failure for NTSC/PAL. These are host checks, not board
+acceptance: cold boots with saved F4/RSSI/2.0x settings, populated NVS,
+NTSC/PAL splash and menu cycles, and a strong-VTX gain check remain required.
+Issue #298 also reports a separate USB-reset ROM hang; this change addresses
+only its receiver memory boot loop and must not close the entire issue.
 
 ## PSRAM: 8 MB on the XIAO, now mapped (board, 2026-10-26)
 
@@ -1827,6 +2202,151 @@ known distance and power against free space; FPV channel by channel).
 - **Noise:** learned per channel with no carrier at the table maximum. At
   5865 MHz (A1) it reads -95.0 dBm, 1.7 dB above the 5180 MHz calibration.
   A1 is at the top of the C5's documented range.
+- **Noise behind an external LNA (2026-11-14):** that reference only learns
+  at the table maximum and within -3..+4 dB of the calibration. Behind an
+  LNA (~21 dB, operator's board, VTX off, A1, 12 MHz filter) the gain
+  model held G65-G67 and the pin noise read 17.5 dB over the calibration:
+  it never learned (`noise_learned=0`) and the noise itself showed as a
+  `-79.5 dBm` carrier with 17 dB C/N. C/N-AUTO's noise map (the control
+  C/N) was right on the same board (`power_x10=-106`, no carrier). The
+  meter now takes its noise from that map first: the highest row of the
+  current channel/filter that measured real noise, referred to the pin
+  with the gain model (`rx_level_noise_from_map`). Bare, that is the top
+  row and the same -95.0 dBm; behind an LNA the highest clean row, which
+  carries the LNA's gain and noise. The old reference stays the fallback,
+  then the calibration. Console `T` shows `noise_src=map|g83|cal` and
+  `noise_row`. Host test only; the map itself inherits C/N-AUTO's limits
+  (a map saved without the LNA stays until a quiet boot re-measures it).
+- **With an LNA the pin level is not the antenna level:** noise and carrier
+  both carry the LNA's gain; the dBm reads at the C5 pin, the C/N is the
+  chain's.
+- **Board check of PR #306 (2026-11-14, same LNA, VTX off, fixed G66):**
+  `RX_LEVEL input_dbm=-79.2 noise_dbm=-80.0 noise_src=map noise_row=72
+  above_noise=0`: no false carrier. The G72 row had been learned while the
+  noise clipped (19.8 cells^2, 0.8 dB low); the map now skips rows over 12
+  cells^2 (`RX_LEVEL_MAP_CLEAN_CELLS2`) for the highest clean one, and uses
+  a clipped row (the lowest) only when nothing else is measured.
+- **LEVEL behind an LNA (same board, LEVEL, VTX off):** LEVEL held G72 and
+  folded in 5155 of 5239 decisions (`clip_pm` 238); `RX_LEVEL` read
+  `unknown` (every probe clipped). Its noise at the top row came from the
+  boot gain table (`s_gain_th`, rows whose noise does not clip, so no G83
+  behind an LNA) or the bare default 4.8 cells^2, ~17 dB under the real
+  noise, so the noise read as a carrier and the homes ran from G83. Now:
+  LEVEL's `noise_top` comes from the same C/N-AUTO map (rolled at 1 Hz,
+  re-bound when it moves more than ~1 dB), and its homes start at the
+  highest row whose noise is at most 9 cells^2 (`LEVEL_TOP_NOISE_MAX_X16`,
+  3 cells rms; bare G83 is 4.8-7 cells^2, so bare boards keep G83). A row
+  above that top goes to the best home without hysteresis. Host model
+  (`test_agc_strong.c`): the old bound holds G72 with no carrier, the new
+  one G67, where KEEL-1 settled on the board (G65-G67), and no level from
+  no carrier to the table floor folds. `test_agc_compare` scores unchanged.
+  Console: `AGC model=LEVEL bound ... noise_src=map|gtab|default homes_from=G..`.
+- **Gain does not add C/N behind the LNA (board, same LNA, VTX off, fixed
+  gains):** the pin-referred noise read -79.2/-79.3 dBm at G54, -79.4/-79.5
+  at G60 and at G66 (`RX_LEVEL input_dbm`, clipping 0-6 per mille): 12 dB
+  more gain, the same pin noise within 0.3 dB, so the noise enters before
+  the gain rows and higher rows only scale signal and noise together. G72
+  clipped 942-954 per mille of the probes, G78 and MAX all of them.
+- **C/N-AUTO learned folded noise:** in that sweep the MAX step (G83, every
+  window folded) was learned as row 83's noise (`cna_carrier_absent`
+  passed), and `RX_LEVEL` read a false 10.8 dB carrier again (`noise_row=83`).
+  The no-carrier learning now takes a 256-probe window only when at most 2 %
+  of its probes clipped or folded (the estimate's `CNA_F_CLIPPED` limit);
+  `CN_AUTO ... clip_rejects=` counts the refused windows. A row already
+  stored that way stays out of RX_LEVEL/LEVEL by the 12 cells^2 limit.
+- **That gate deadlocked LEVEL on the board** (flash of the LEVEL fix, VTX
+  off): LEVEL bound the default 4.8 cells^2, parked on G72 where every
+  learning window clipped (`clip_rejects` rising, `rows_with_noise=0`), so
+  the map never got a row and LEVEL never a reference (17701 folds, no
+  move). A clipped window's power is now kept per row for 5 s as a lower
+  bound (`s_cna_clip_floor`, never stored, no kurtosis test: clipping
+  lowers it, and a row that clips has too much power with or without a
+  carrier). With no clean map row the lowest such row sets the noise; a
+  clean row, learned once LEVEL is under the top, replaces it.
+- **Edge walk with the LNA (blackbox session 378, firmware of PR #307
+  before the clip floor):** the top worked (gain never over G65), the
+  picture at ~50 % near -91 dBm at the antenna (pin level minus the 22.6 dB
+  datasheet gain), about 4.5 dB better than the bare-board -86.5 dBm of
+  2026-10-27 (another session and route). It still went at 4-7 dB C/N
+  instead of ~1.5: `dc_residual` / `CALIBRATION_OR_PHY` dropouts with DC
+  2.2-2.8 cells on rows G57-G63, template rows on this board, while LEVEL
+  crossed G38-G65 within a second (fading). The per-row servo never held a
+  row long enough, and its first adoption had pinned every row, after which
+  no correction was shared at all.
+- **Shared DC model (`dc_servo.h` dc_model_t):** the live trim of a row is
+  `shared + local(row)`. A step on a row whose codes are its own
+  (calibrated or adopted) or that has settled is drift and moves every row;
+  a step on an unsettled template row is its own, and template rows without
+  one inherit the nearest row's. A row whose shared steps do not settle it
+  (3 strikes) turns local, so rows cannot fight over the shared part.
+  Adoption keeps the offset and what neighbours inherit (no more pinning).
+  Host model (`test_dc_servo.c`): a common shift fixed on every row in two
+  visits of one row; 18 template rows 30-47 codes off within a code after
+  38 hopping visits; a 10-code drift after settling fixed everywhere in one
+  visit; one calibrated row 15 codes off of its own ends local with every
+  other row at 0. Console `T`: `DC_MODEL shared= shared_steps= local_steps=`.
+  Works the same with and without an LNA and needs no calibration;
+  calibration only gives rows their own codes.
+- **Calibration behind an LNA:** the filter calibration and check, the DC
+  profile pass and the startup noise map ran at the table maximum, where
+  the LNA's noise folds (`FILTER_CAL gain=83 clip_pm=190`); the DC row
+  search began there and its carrier gate would stop it before the rows the
+  edge uses. They now use `receiver_gain_top()` (the table maximum on a bare
+  board) and the DC search skips rows over it.
+- **The noise map follows a front-end change:** the no-carrier learning
+  only takes a row within +0.5/-2 dB of the noise it knows, so a map
+  learned with the LNA never followed its removal and a map learned bare
+  would never take the LNA's noise; with LEVEL, RX_LEVEL and the useful top
+  on the map that matters. A carrier cannot move the noise far: a weak one
+  adds under ~1 dB, a strong one fails the kurtosis test, none lowers it.
+  A noise-like, unclipped window more than 6 dB over or 2 dB under the
+  noise the map expects at that row (`cna_noise_at`), or a clipped
+  no-video window more than 6 dB over it (a lower bound: never
+  overshoots), rebases the whole map by the same thermal ratio and drops
+  its anchors (`cna_front_end_changed`, `cna_noise_rebase`; `CN_AUTO
+  rebases=`). 1-6 dB changes stay slow (0.5 dB steps), as before.
+  The learning gate moved from 2 % to 25 % clipped probes (G67 behind the
+  LNA: 7-15 %, G72: 94 %). Board without the LNA after these builds:
+  noise -94.6 dBm (map row 79), LEVEL G79, no false carrier.
+- **No DC hold under the table (blackbox session 389, ~22 dB LNA):** the
+  DC table, its hold and the servo cover G54-G89 (the top RF stage) only;
+  under it the chip's own DC applied. Behind the LNA a medium carrier sits
+  on G46-G53, and there the DC read 1-2.6 cells (I/Q -1.05/2.65): 12 s
+  without picture at 7-10 dB C/N and ~-85 dBm at the antenna, until the
+  operator cut the power (reset reason poweron; no crash). Without the LNA
+  those rows only see strong carriers, whose circle (5-8 cells) tolerates
+  that DC. With the VTX off the DC there cannot be measured (the noise is
+  under one ADC step); the servo measures it on the carrier circle.
+- **LOW DC (EXPERIMENTAL, default ON):** every row G30-G53 (stages 4-7) is held on the
+  chip's own bank-2 codes (read once per table context in vendor mode,
+  right after the gain write) plus one live trim per RF stage (8 stages:
+  G0, G10, G17, G25, G30, G38, G43, G47), servoed like the template rows on
+  one extra servo slot per stage (LP RAM). Bank 1 stays the chip's own (phy.c
+  pins it only inside the table span). Nothing is stored. OFF restores the
+  chip's own DC. Console `T`: `DC_LOW on= holds= steps= stage= trim= base=`.
+  Stages 0-3 (G0-G29: very strong carriers only, where the chip's DC does
+  no harm) keep the chip's own DC: with all eight stages heap_min fell to
+  840 B and the boot splash crashed; with four, heap_min 1208 B, heap_lp
+  1036 B. Firmware build only; a board check with a carrier on G40-G53 is
+  still to come.
+- **Boot splash: interlaced again, monochrome (2026-11-14).** Every boot
+  logged `[MENU] progressive fallback: interlaced chain did not fit`, also
+  on 5.0.593 (rebuilt and flashed to check): the NTSC interlaced chain took
+  1499 DMA descriptors (~18 KiB) because each of the eight burst phases had
+  its own line prefix. The operator's goggles showed the 240p fallback
+  inverting and desyncing (as noted in menu_raster.h on 2026-10-18). The
+  menu is monochrome, so the burst is gone: every line has one prefix, and
+  a line's tail plus the next line's prefix are one node. NTSC interlaced
+  994 nodes (11.9 KiB), PAL 1203 (14.4 KiB); the raster buffer shrank
+  ~5.2 KB. Board: no fallback, heap_min 1280 -> 11056 B, heap_internal
+  22684 -> 27900 B. `test_no_signal_raster.c` checks the sync grid, the
+  broad pulses, no burst and the node budget.
+- **EXPERIMENTAL > LEVEL TOP** (9 / 12 / 16 / 6 cells^2, 9 the baseline):
+  the noise the top row may carry. Behind the ZK06-UM (22.6 dB, NF 0.95 dB
+  at 5.8 GHz; system NF ~1.0 dB by Friis, which predicts the measured 17.5
+  dB noise rise within 0.1 dB) that is about G67 / G68 / G70 / G65; bare
+  boards keep G83 at 9-16. Expected: no C/N difference (the noise enters
+  before the gain), more fold sparkles towards 16. An edge walk decides.
 
 **Use:** a VTX at a known distance and power against free space gives the
 dB lost before the chip. For example, 25 mW with 2 dBi each side over 10 m at
@@ -2359,3 +2879,107 @@ model at a time, union). **Evidence:** host simulation and firmware build
 only; the harness shares its picture model with LEVEL's quality function
 (the physics from PR #230), so a board A/B is the deciding test. No range
 or picture claim.
+
+## External LNA close in: gain floor fixes (2026-11-13, host model only)
+
+- **Report (Discord, Krience):** an LNA and CVBS filter taken from an RX5818
+  module in front of the XIAO ESP32-C5: range clearly up, picture worse close
+  in, suspected input saturation. No logs, LNA gain or VTX power known.
+- **Table room:** the bare board already parked at G21/G24 close in (session
+  55). The model puts G2, the receiver floor, ~17 dB under G21 (G21 36.8 dB,
+  G2 19.7 dB, G83 ~94 dB): an LNA of 15-20 dB uses up the whole table close
+  in. Rows 0-16 are RF stages 0-1, the lowest the vendor table has.
+- **Two firmware limits under G20, never reached without an LNA:**
+  - `dg_reset_context` clamped the core to G20 or higher (anchor too). With
+    the hardware under G20 the core and `s_current_gain` differed and
+    `receiver.c` rebound the gain core on every window (rebind counter). Now
+    the floor is G2, as in `apply_target` and the KEEL-1 home rows.
+  - LEVEL's level histogram ended at +80 dB cells^2 at the top row (about G9
+    for a carrier on its best radius). A stronger carrier read as +79 and
+    LEVEL held a row that folded every window: host model, +88 dB held G10
+    with 2000 of 2000 late windows folded; now G4 at 5.7 cells, no folds
+    (`test/test_agc_strong.c`). `AGC_LMAX_DB` is now +100.
+  - `test_agc_compare` scores are identical before and after (no change
+    within the old range).
+- **Not fixed by firmware:** a carrier still too strong at G2, compression of
+  the external LNA itself, or of the C5 input before its gain stages. If the
+  flight log shows the gain at G2-G4 with folds (ATTACK events, rails 15)
+  close in, the front end needs less gain there (an LNA bypass/enable or a
+  lower-gain LNA); a fixed pad costs the range the LNA gave.
+- **Board (Krience, PR build of the two fixes):** v5.0.583 degraded from
+  about 1 m, the fixed build only from about 20 cm. One report, no logs.
+
+### STRONG LANE (2026-11-13, host policy only)
+
+- **What is left at 20 cm** is a carrier over the ultrafine window on the
+  lowest rows (or compression; not told apart without logs). The window is
+  the one limit firmware still owns: the fine lane holds 6 dB and the coarse
+  lane 12 dB more at the same analog gain, a GPIO-matrix route with no analog
+  step and no decoder restart ("Edge window" above).
+- **Policy (`main/strong_lane.h`, EXPERIMENTAL > STRONG LANE, default ON):**
+  on rows 0-9 with no lower row asked, 16 folded windows over clean ones
+  (~3 ms) step one lane coarser, at most once per 20 ms. On a coarser lane
+  the gain is held; 200 ms under 2.5 cells rms (5 on the finer lane, a fold
+  needs ~8: 4 dB between the two decisions) steps back. No carrier reads
+  small, so it returns to ultrafine and the normal gain control. A pause
+  owner (calibration, scan), a fixed gain or the pair sweep releases it at
+  once. Console `T`: `STRONG_LANE`.
+- **Side effects on a coarser lane:** the DC servo, C/N reference, map
+  learning and the DC/level/C-N accumulators stand still
+  (`experimental_transfer_active`), so AFC/profile decisions hold; expected
+  to be harmless on a carrier this strong, not measured.
+- **Not reached without an LNA** (close in G21/G24), so the bare board is
+  unchanged. The general live lane change stays retired (2026-10-04).
+- **Model (`research/strong_lane.py`, `research/data/strong_lane.json`):**
+  the exact ADC bit model and decoder of `research/edge_window.py`, an ideal
+  carrier at 30 dB C/N on the floor row, luma SINAD in dB (lines kept 1.00
+  in every cell: sync holds, the picture is what goes):
+
+  | radius (ultrafine cells) | over the window | ultrafine | fine | coarse | STRONG LANE |
+  | ---: | ---: | ---: | ---: | ---: | --- |
+  | 6 | -2.5 dB | 10.0 | 10.0 | 3.6 | ultrafine 10.0 |
+  | 8 | +0.0 dB | 2.3 | 8.5 | 6.8 | fine 8.5 |
+  | 10 | +1.9 dB | -3.3 | 9.6 | 9.3 | fine 9.6 |
+  | 12 | +3.5 dB | -2.0 | 10.0 | 10.0 | fine 10.0 |
+  | 16 | +6.0 dB | -0.6 | 2.3 | 8.5 | coarse 8.5 |
+  | 20 | +8.0 dB | -2.3 | -3.3 | 9.6 | coarse 9.6 |
+  | 24 | +9.5 dB | -1.6 | -2.0 | 10.0 | coarse 10.0 |
+  | 31 | +11.8 dB | 0.2 | 3.1 | 10.1 | coarse 10.1 |
+  | 40 | +14.0 dB | 3.4 | 4.7 | 9.6 | coarse 9.6 |
+
+  A folded lane loses 10-14 dB of luma SINAD; the lane the policy settles on
+  stays within ~1.5 dB of an in-window carrier up to the ADC range (32
+  cells, +12 dB). The 40-cell row clips an ideal ADC only; a real front end
+  compresses before or there, so it is no evidence beyond +12 dB. A lane at
+  2 of its own cells or less reads 0.5-6.8 dB (coarse at 4-8 cells): the
+  step back at 2.5 cells is on the right side of that. Not modelled: analog
+  compression, the route-write transient, fading.
+- **Board logs (operator, LNA, close in, 2026-11-13; two FIELD_TRACE captures
+  of ~18 s, handheld, not a controlled A/B):**
+  - 5.0.583 (before the gain floor fixes): the gain never went under G10 and
+    sat there through runs of clipped windows with sync lost; 64 % of 191
+    samples with sync, 25 % of the clipped ones.
+  - PR #304 build: G4 and G2 are reached; 76 % of 200 samples with sync, 65 %
+    of the clipped ones. Consistent with the fixes; the two walks differ.
+  - **STRONG LANE never stepped on G2.** Runs of clipped windows on G2
+    (20 samples) with no step; all three steps were taken on G4 and each fell
+    back within seconds. Cause: on G2 LEVEL asks for its lowest home, G0,
+    under the receiver floor; the raw target read as "room left" and reset
+    the fold score every window. Fixed (`strong_lane_no_room`, host check in
+    `test_agc_strong.c`); no board result for the fix yet.
+  - **The level swings from empty to clipped within 0.1-1 s on one row**
+    (16-18 % of windows with most samples on the origin, 20 % clipped, on
+    every row used). LEVEL climbs to G10-G17 in the empty stretches and comes
+    back down a home row per fold (G17 -> G14 -> G10 -> G4, sync lost in each).
+    Whether that is the handheld movement or something in the LNA chain is
+    not told apart by these logs.
+  - **AFC:** `cfo_khz` (the raw porch frequency) about -1.1 to -1.2 MHz in
+    both logs against the porch target of -1000 kHz (`AFC_PORCH_TARGET_KHZ`),
+    a residual of 0.1-0.2 MHz, with `offset_khz=0` and `cn_model_valid=0`
+    throughout the traces: on these low rows the C/N reads UNKNOWN and the
+    AFC holds, as designed. No large offset; an earlier reading of these
+    numbers as "1.2 MHz off centre" was wrong.
+- **Open:** the mixed samples of the eight route writes on a carrier (raw IQ
+  across a change), the picture at each step, and whether compression of the
+  LNA or the C5 input limits before the coarse lane does. 12 dB is at most
+  a quarter of the distance in free space.

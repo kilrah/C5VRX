@@ -151,7 +151,7 @@ static bool find_quiet_channel(size_t original)
         if (ch == original) continue;
         if (abs((int)rf_channel_freq(ch) - (int)s_original_mhz) < 40) continue;
         if (rf_set_channel(ch) != ESP_OK) continue;
-        receiver_set_gain(rf_gain_table()->max_index);
+        receiver_set_gain(receiver_gain_top());   /* useful top: under an external LNA G83 folds */
         vTaskDelay(pdMS_TO_TICKS(50));
         if (channel_quiet()) return true;
     }
@@ -169,7 +169,7 @@ bool filter_calibrate(bool automatic)
     const rf_filter_t previous = rf_filter(), calibrated = {PHY_FILTER_CALIBRATED, 0, false};
     s_scan_active = true;              /* control loop and AFC stand aside */
     bool ok = rf_set_filter(calibrated);
-    receiver_set_gain(rf_gain_table()->max_index);
+    receiver_set_gain(receiver_gain_top());   /* useful top: under an external LNA G83 folds */
     vTaskDelay(pdMS_TO_TICKS(50));
     status_screen("CALIBRATING", "LOOKING FOR A QUIET CHANNEL", "ONE TIME ONLY, ABOUT 30 S", -1);
     const char *fail = ok ? NULL : "calibrated_bytes_not_applied";
@@ -412,7 +412,7 @@ void filter_measure_current(void)
     if (video_recent() || !receiver_pause("FILTER_CHECK")) return;
     const uint8_t restore = s_current_gain;
     const rf_filter_t live = rf_filter();
-    receiver_set_gain(rf_gain_table()->max_index);
+    receiver_set_gain(receiver_gain_top());
     const int64_t t0 = esp_timer_get_time();
     filter_blob_t cal = s_filter_cal;
     filter_xn_blob_t xn = s_filter_xn;

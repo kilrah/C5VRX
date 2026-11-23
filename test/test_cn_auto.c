@@ -319,6 +319,40 @@ int main(void)
                10.0 * log10(f.noise[72] / 0.84));
         check("in-service learning stays within 0.5 dB of the clean startup value", drift <= 0.51 && drift >= 0.0);
     }
+    /* A front end that changed (an external LNA fitted or removed, 2026-11-14):
+     * noise-like windows far from the map move the whole map. */
+    {
+        const double known = 3.85;   /* bare row 79 on the board */
+        #define NOISE(p, kurt) ((p) * 96.0), ((kurt) * (p) * (p) * 96.0), 96u
+        check("front end: noise 17 dB over the map (LNA fitted) is a new front end",
+              cna_front_end_changed(NOISE(known * 50.0, 2.0), (float)known));
+        check("front end: noise 17 dB under the map (LNA removed) is a new front end",
+              cna_front_end_changed(NOISE(known / 50.0 + 0.7, 2.0), 30.0f));
+        check("front end: 3 dB over the map is no evidence (a weak carrier or interference)",
+              !cna_front_end_changed(NOISE(known * 2.0, 2.0), (float)known));
+        check("front end: a strong carrier (low kurtosis) 17 dB over is no new front end",
+              !cna_front_end_changed(NOISE(known * 50.0, 1.2), (float)known));
+        #undef NOISE
+        cna_noise_map_t m = {0};
+        for (unsigned r = 72; r <= 83; ++r) {
+            m.noise[r] = (float)(CNA_QUANT_CELLS2 + 3.68 * pow(10.0, (r - 79.0) / 10.0));
+            m.n[r] = CNA_MIN_SAMPLES; m.anchor[r] = m.noise[r];
+        }
+        const float before83 = m.noise[83];
+        const float expected67 = (float)(CNA_QUANT_CELLS2 + 3.68 * pow(10.0, (67.0 - 79.0) / 10.0)) + 0.0f;
+        const float lna67 = (float)(CNA_QUANT_CELLS2 + 8.3);
+        cna_noise_rebase(&m, 67, lna67, expected67 < CNA_QLIM_CELLS2 ? CNA_QLIM_CELLS2 : expected67, 1);
+        const double ratio = 8.3 / ((expected67 < CNA_QLIM_CELLS2 ? CNA_QLIM_CELLS2 : expected67) - CNA_QUANT_CELLS2);
+        check("rebase: the row takes the measurement", fabsf(m.noise[67] - lna67) < 1e-4f && m.n[67] == CNA_MIN_SAMPLES);
+        check("rebase: every other row moves by the same thermal ratio",
+              fabs((m.noise[83] - CNA_QUANT_CELLS2) / (before83 - CNA_QUANT_CELLS2) - ratio) < 1e-3 * ratio);
+        bool anchors = true;
+        for (unsigned r = 0; r < CNA_ROWS; ++r) anchors = anchors && m.anchor[r] == 0.0f;
+        check("rebase: the anchors go (in-service learning may follow freely)", anchors);
+        cna_noise_map_t q = {0};
+        cna_noise_rebase(&q, 67, 8.0f, 0.3f, 1);
+        check("rebase: refused against a quantisation-limited expectation", q.noise[67] == 0.0f);
+    }
     printf("%u/%u C/N-AUTO checks passed\n", s_run - s_fail, s_run);
     return s_fail != 0;
 }

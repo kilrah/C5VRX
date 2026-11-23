@@ -175,6 +175,46 @@ static inline bool cna_carrier_absent(double sum_m2, double sum_m4, unsigned pro
     return true;
 }
 
+/* ---- a front end that changed (an external LNA fitted or removed) ----
+ * The no-carrier test above only takes a row within +0.5/-2 dB of the noise
+ * it knows, so a map learned with an LNA never followed its removal (17 dB
+ * lower; board 2026-11-14) and a map learned bare would never take the
+ * LNA's noise (17 dB higher). A carrier cannot do either: a weak one (the
+ * case the 0.5 dB guards) adds under ~1 dB, a strong one fails the kurtosis
+ * test, and none lowers the power. So a noise-like window (kurtosis >=
+ * CNA_ABSENT_KURT, not clipped: the caller's test) more than
+ * CNA_REBASE_UP_DB over or CNA_REBASE_DOWN_DB under the known noise is a
+ * new front end: the whole map moves by the same thermal ratio (it scales
+ * on every row alike), its anchors go, and the row takes the measurement. */
+#define CNA_REBASE_UP_DB   6.0f
+#define CNA_REBASE_DOWN_DB 2.0f
+static inline bool cna_front_end_changed(double sum_m2, double sum_m4, unsigned probes, float known_noise_cells2)
+{
+    if (probes < 64u || sum_m2 <= 0.0 || !(known_noise_cells2 > 0.0f)) return false;
+    const double m2 = sum_m2 / probes, m4 = sum_m4 / probes;
+    if (m4 / (m2 * m2) < CNA_ABSENT_KURT) return false;
+    const float d = cna_db((float)m2 / known_noise_cells2);
+    return d > CNA_REBASE_UP_DB || d < -CNA_REBASE_DOWN_DB;
+}
+/* expected_cells2: the row's noise the map expects (cna_noise_at: its own or
+ * the nearest real row's through the gain model), at least CNA_QLIM_CELLS2. */
+static inline void cna_noise_rebase(cna_noise_map_t *m, unsigned row, float power_cells2, float expected_cells2,
+                                    int64_t now_us)
+{
+    if (row >= CNA_ROWS || !(power_cells2 > CNA_QUANT_CELLS2) || !(expected_cells2 >= CNA_QLIM_CELLS2)) return;
+    const float ratio = (power_cells2 - CNA_QUANT_CELLS2) / (expected_cells2 - CNA_QUANT_CELLS2);
+    for (unsigned k = 0; k < CNA_ROWS; ++k) {
+        m->anchor[k] = 0.0f;
+        if (!m->n[k] || k == row) continue;
+        const float th = m->noise[k] - CNA_QUANT_CELLS2;
+        m->noise[k] = (th > 0.0f ? th * ratio : 0.0f) + CNA_QUANT_CELLS2;
+        m->us[k] = now_us;
+    }
+    m->noise[row] = power_cells2;
+    m->n[row] = CNA_MIN_SAMPLES;
+    m->us[row] = now_us;
+}
+
 /* ---- moments around a given DC ----
  * Integer sums in dsp units (x = 2v + 1 for a cell value v, so a dsp unit is
  * half a cell): cheap on the C5 (no double FPU), exact. p = x^2 + y^2 <= 450,

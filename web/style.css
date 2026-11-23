@@ -187,17 +187,9 @@ summary { cursor: pointer; color: #b0b7c1; min-height: 32px; }
 .amazon-button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 
 /* Hardware card */
-.hardware-purchase { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 24px 0 0; padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); }
-.hardware-copy { min-width: 0; flex: 1; }
-.hardware-title { margin: 0 0 8px; font-size: .875rem; font-weight: 600; }
 .amazon-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 14px; background: var(--accent); border: 1px solid var(--accent); color: #fff; font-size: .875rem; font-weight: 600; }
 .amazon-button:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; text-decoration: none; }
 .affiliate-note { margin: 8px 0 0; color: var(--muted); font-size: .75rem; }
-.hardware-photo { position: relative; flex: 0 0 52px; height: 70px; overflow: hidden; }
-.hardware-photo img { position: absolute; width: 142px; max-width: none; height: auto; left: -43px; top: -18px; }
-.hardware-extras { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-.hardware-extra { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); }
-.hardware-extra img { flex: 0 0 52px; width: 52px; height: 64px; object-fit: contain; }
 
 @media (max-width: 800px) {
   .workspace { display: block; }
@@ -233,8 +225,6 @@ summary { cursor: pointer; color: #b0b7c1; min-height: 32px; }
   .terminal-output { height: 320px; padding: 14px; }
   .command-row { padding: 12px 12px 0; }
   .log-hint { padding: 0 12px 12px; }
-  .hardware-purchase { padding: 12px 14px; gap: 14px; }
-  .hardware-extras { grid-template-columns: 1fr; }
 }
 
 /* Flight log (terminal view) */
@@ -280,19 +270,47 @@ summary { cursor: pointer; color: #b0b7c1; min-height: 32px; }
 .project-info, .project-faq { margin-top: 30px; padding-top: 24px; border-top: 1px solid var(--line); }
 .project-info h3 { margin: 22px 0 8px; font-size: 16px; font-weight: 600; }
 .project-info p, .project-faq p { margin: 0 0 12px; color: var(--text-2); line-height: 1.7; }
-.kit-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
-.kit-preview figure { margin: 0; }
-.kit-preview img { display: block; width: 100%; height: auto; }
-.kit-preview figcaption { margin-top: 7px; color: var(--muted); font-size: 12px; }
-.hardware-heading { margin-top: 30px; }
-.hardware-heading + .hardware-purchase { margin-top: 0; }
+.hardware-option { margin-top: 18px; padding: 20px; background: var(--panel); border: 1px solid var(--line); }
+.project-info .hardware-option h3 { margin: 0 0 10px; font-size: 18px; }
+.project-info .option-label { margin: 0 0 4px; color: var(--accent-soft); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.module-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.module-gallery figure { margin: 0; }
+.module-gallery img { display: block; width: 100%; height: auto; }
+.module-gallery figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.module-offer { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: center; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.project-info a.seller-logo { position: relative; display: block; width: 100%; max-width: 200px; }
+.seller-logo img { display: block; width: 100%; height: auto; }
+.seller-logo .seller-logo-spin { position: absolute; left: 5.67%; top: 21.73%; width: 35.75%; animation: seller-logo-spin 6s linear infinite; }
+@keyframes seller-logo-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .seller-logo .seller-logo-spin { animation: none; } }
+.project-info a.seller-button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 18px; background: var(--accent); border: 1px solid var(--accent); color: #fff; font-size: .9375rem; font-weight: 600; text-decoration: none; }
+.project-info a.seller-button:hover, .project-info a.seller-button:focus-visible { color: #fff; text-decoration: none; opacity: .85; }
+.project-info .seller-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-top: 14px; }
+.product-card { display: flex; flex-direction: column; min-width: 0; padding: 12px; background: var(--bg); border: 1px solid var(--line); }
+.product-photo { aspect-ratio: 1; margin-bottom: 12px; background: #eef0f2; }
+.product-photo img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.project-info .product-card h4 { margin: 0 0 4px; color: var(--text); font-size: 15px; font-weight: 600; }
+.project-info .product-card p { flex: 1; margin: 0 0 12px; font-size: 13px; line-height: 1.55; }
+.project-info .product-card a.amazon-button { align-self: stretch; color: #fff; text-decoration: none; }
+.project-info .product-card a.store-button { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; min-height: 36px; margin-top: 6px; padding: 7px 14px; background: transparent; border: 1px solid var(--accent); color: var(--accent); font-size: .875rem; font-weight: 600; text-decoration: none; }
+.project-info .product-card a.store-button:hover { background: var(--accent); color: #fff; text-decoration: none; }
+.project-info .product-card a.store-button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.project-info a.seller-button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 18px; background: var(--accent); border: 1px solid var(--accent); color: #fff; font-size: .9375rem; font-weight: 600; text-decoration: none; }
+.project-info a.seller-button:hover, .project-info a.seller-button:focus-visible { color: #fff; text-decoration: none; opacity: .85; }
+.feature-list { margin: 0 0 12px; padding-left: 20px; color: var(--text-2); line-height: 1.7; }
+.feature-list li { margin: 6px 0; }
 .project-faq details { border-top: 1px solid var(--line); }
 .project-faq summary { padding: 14px 0; font-weight: 600; cursor: pointer; }
 .project-faq details p { padding-bottom: 4px; }
-#tools, #about, #diy-kit, #hardware, #faq { scroll-margin-top: 20px; }
+#tools, #about, #module, #hardware, #faq { scroll-margin-top: 20px; }
 @media (max-width: 640px) {
-  .kit-preview { grid-template-columns: 1fr; }
-  .kit-preview figure { max-width: 100%; }
+  .module-gallery, .module-offer { grid-template-columns: 1fr; }
+  .module-offer { gap: 16px; }
+  .hardware-option { padding: 16px; }
+  .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .product-card { padding: 10px; }
+  .project-info .product-card a.amazon-button, .project-info .product-card a.store-button { padding: 7px 6px; white-space: nowrap; font-size: .8125rem; }
 }
 
 .calibration-report { display: grid; gap: .65rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border, #334155); }

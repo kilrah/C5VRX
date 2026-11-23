@@ -46,8 +46,8 @@ function harness(sourceName, packageType = 'merged', confirmed = true) {
       writeReg: async (...args) => resets.push(['writeReg', ...args]), after: async mode => resets.push(['after', mode]) }
   });
   vm.runInContext(source, context);
-  for (const id of ['selectRelease', 'selectAlphaBuild']) get(id).value = '0';
-  for (const id of ['selectPackageType', 'selectAlphaPackageType']) get(id).value = packageType;
+  for (const id of ['selectRelease', 'selectAlphaBuild', 'selectHwxBuild']) get(id).value = '0';
+  for (const id of ['selectPackageType', 'selectAlphaPackageType', 'selectHwxPackageType']) get(id).value = packageType;
   vm.runInContext(`
     activeSource = ${JSON.stringify(sourceName)};
     isConnected = true; esploader = mockLoader;
@@ -57,12 +57,12 @@ function harness(sourceName, packageType = 'merged', confirmed = true) {
       { name: 'c5vrx5.bin', local_url: 'firmware/alpha/c5vrx5.bin', size: 4 },
       { name: 'c5vrx5_merged.bin', local_url: 'firmware/alpha/c5vrx5_merged.bin', size: 4 }
     ] };
-    githubReleases = [rel]; githubAlphaBuilds = [rel];
+    githubReleases = [rel]; githubAlphaBuilds = [rel]; githubHwxBuilds = [rel];
   `, context);
   return { get, context, downloads, flashes, alerts, commands, lifecycle, resets, shortcuts, click: () => get('btnFlash').handlers.click() };
 }
 
-for (const remote of ['github', 'alpha']) {
+for (const remote of ['github', 'alpha', 'hwx']) {
   test(`${remote} Full firmware downloads the merged binary at 0x0`, async () => {
     const h = harness(remote);
     await h.click();
@@ -380,4 +380,29 @@ test('a loader that refuses the watchdog writes still gets the RTS reset', async
   h.context.mockLoader.writeReg = async () => { throw new Error('write failed'); };
   await h.click();
   assert.deepEqual(h.resets, [['after', 'hard_reset']]);
+});
+
+test('hardware experiment flashing asks for confirmation first', async () => {
+  const h = harness('hwx', 'merged', false);
+  await h.click();
+  assert.deepEqual(h.downloads, []);
+  assert.equal(h.flashes.length, 0);
+});
+test('hardware experiment tags list per experiment, versions before PR channels', async () => {
+  const h = harness('hwx');
+  const rel = (tag, date) => ({ tag_name: tag, published_at: date, assets: [] });
+  h.context.fetch = async () => ({ ok: true, json: async () => [
+    rel('c5vrx5-hwx-fpga_iq-pr-12', '2026-11-16T10:00:00Z'),
+    rel('c5vrx5-v5.0.600', '2026-11-16T09:00:00Z'),
+    rel('c5vrx5-hwx-fpga_iq-v5.0.99', '2026-11-15T09:00:00Z'),
+    rel('c5vrx5-hwx-fpga_iq-v5.0.600', '2026-11-15T10:00:00Z'),
+    rel('c5vrx5-hwx-fpga_iq', '2026-11-15T10:00:00Z'),
+    rel('c5vrx5-hwx-adc_probe-pr-3', '2026-11-14T10:00:00Z'),
+    rel('c5vrx5-pr-12', '2026-11-16T10:00:00Z')] });
+  await h.context.fetchReleases();
+  const tags = list => JSON.parse(vm.runInContext(`JSON.stringify(${list}.map(r => r.tag_name))`, h.context));
+  // Versions newest first by number (v5.0.600 after v5.0.99 as text), then PRs; the old unversioned channel is gone.
+  assert.deepEqual(tags('githubHwxBuilds'), ['c5vrx5-hwx-adc_probe-pr-3', 'c5vrx5-hwx-fpga_iq-v5.0.600',
+    'c5vrx5-hwx-fpga_iq-v5.0.99', 'c5vrx5-hwx-fpga_iq-pr-12']);
+  assert.deepEqual(tags('githubAlphaBuilds'), ['c5vrx5-v5.0.600', 'c5vrx5-pr-12']);
 });

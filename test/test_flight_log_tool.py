@@ -31,6 +31,36 @@ def summary(length=71):
 
 
 class FlightLogToolTest(unittest.TestCase):
+    def test_experiment_append_keeps_old_records(self):
+        old = summary(97)
+        struct.pack_into('<I', old, 71, 0x1234)
+        old[75] = 1
+        old[86] = 2
+        row = flight_log.second(old)
+        self.assertEqual(row['exp_mask'], 0x1234)
+        self.assertEqual(row['exp_fold_memory'], 2)
+        self.assertIsNone(row['exp_clock_d10'])
+        new = old + bytes((1,))
+        self.assertEqual(flight_log.second(new)['exp_clock_d10'], 1)
+
+    def test_auto_output_reads_the_same_in_both_schema_versions(self):
+        """EXP_VERSION 2 swapped AUTO OUTPUT to OFF/ON (OFF the baseline);
+        rows report the version-2 meaning: 0 = OFF, 1 = ON."""
+        k = flight_log.EXP_AUTO_OUTPUT
+
+        def row(version, value):
+            p = summary(77 + len(flight_log.EXP_NAMES))
+            p[75:77] = bytes((version, 0))
+            p[77 + k] = value
+            return flight_log.second(p)
+        self.assertEqual(row(1, 0)['exp_auto_output'], 1)   # v1 ON
+        self.assertEqual(row(1, 1)['exp_auto_output'], 0)   # v1 OFF
+        self.assertEqual(row(2, 0)['exp_auto_output'], 0)   # v2 OFF
+        self.assertEqual(row(2, 1)['exp_auto_output'], 1)   # v2 ON
+        self.assertIsNone(row(3, 1)['exp_auto_output'])     # unknown schema
+        groups = flight_log.experimental_groups([row(1, 1), row(2, 0), row(1, 0), row(2, 1)])
+        self.assertEqual([(g['AUTO OUTPUT'], g['observations']) for g in groups], [(0, 2), (1, 2)])
+
     def test_output_telemetry_decodes_with_validity(self):
         row = flight_log.second(summary())
         self.assertEqual(row['output_demod'], 'U85Q-LP 1a09f5c092e8')

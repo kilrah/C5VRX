@@ -226,6 +226,7 @@ static void receiver_resume(void) {}
 static void receiver_set_gain(uint8_t g) {(void)g;++writes;}
 static struct {int max_index;} table={83};
 #define rf_gain_table() (&table)
+static unsigned receiver_gain_top(void) {return (unsigned)table.max_index;}   /* bare board: the table maximum */
 static unsigned rf_frequency_mhz(void) {return 5865;}
 static unsigned live_filter_key(void) {return 42;}
 static bool copy_probe_window(uint8_t *s,void *n) {

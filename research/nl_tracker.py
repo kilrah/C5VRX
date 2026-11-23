@@ -1,0 +1,210 @@
+"""C5VRX by Twotoz and the C5VRX contributors: a nonlinear-gain phase tracker
+in the U85Q 32-token / 32-state LUT layout (research candidate).
+
+Extends research/kp_morph.py build_lut (the U85Q closed-form generator of the
+C5VRX-4 untrained search, PR #190). Same program, same token half (top five
+bits of every shared word), so it runs on main/u85q.bsasm's bit routing; only
+the (state, token) -> (next state, DAC) half differs: the loop gain depends on
+the size of the phase error. Small errors (tracking the picture and the colour
+subcarrier) get KP_HI, large ones (noise spikes and clicks near threshold)
+the lower KP_LO beyond the knee, so the loop keeps U50P64-R1's calm at the
+edge without its low-pass on a strong carrier. Host research only.
+"""
+import math
+import sys
+from pathlib import Path
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import kp_morph  # noqa: E402
+import sim  # noqa: E402
+
+
+def gain_law(e, kp_hi, kp_lo, knee):
+    a = abs(e)
+    d = kp_hi * a if a <= knee else kp_hi * knee + kp_lo * (a - knee)
+    return math.copysign(d, e)
+
+
+def build_lut(kp_hi, kp_lo, knee_deg, quad_kp=0.5, erase_r=0.8, out='committed'):
+    T, P = 32, 32
+    bits = sim.PAIR_BITS
+    ang = np.zeros(1024)
+    rad = np.zeros(1024)
+    for a in range(1024):
+        word = 0
+        for j in range(10):
+            word |= ((a >> j) & 1) << int(bits[j])
+        za = kp_morph._nibble(word, (4, 5, 6, 7)) + 1j * kp_morph._nibble(word, (0, 1, 2, 3))
+        ang[a] = math.atan2(za.imag, za.real)
+        rad[a] = abs(za)
+    TA = T - 4
+    tok = np.floor((ang + np.pi) * TA / (2 * np.pi)).astype(int) % TA
+    org = rad < erase_r
+    tok[org] = TA + (np.floor((ang + np.pi) / (np.pi / 2)).astype(int) % 4)[org]
+    obs = (np.arange(TA) + .5) * 2 * np.pi / TA - np.pi
+    ph = (np.arange(P) + .5) * 2 * np.pi / P - np.pi
+    lo, hi = (2 * np.pi * f * 1e6 * 50e-9 for f in kp_morph.RANGE_MHZ)
+    knee = math.radians(knee_deg)
+    lut = np.zeros(1024, np.int64)
+    for s in range(P):
+        for t in range(T):
+            if t >= TA:
+                o = (t - TA + .5) * np.pi / 2 - np.pi
+                e = (o - ph[s] + np.pi) % (2 * np.pi) - np.pi
+                d = quad_kp * e
+            else:
+                e = (obs[t] - ph[s] + np.pi) % (2 * np.pi) - np.pi
+                d = gain_law(e, kp_hi, kp_lo, knee)
+            nxt = int(np.floor((ph[s] + d + np.pi) * P / (2 * np.pi))) % P
+            if out == 'committed':      # the advance the quantised state really made (U85Q)
+                theta = (ph[nxt] - ph[s] + np.pi) % (2 * np.pi) - np.pi
+            else:                       # 'pred': the loop's own estimate, before the state is rounded
+                theta = d
+            code = int(np.rint(np.clip((theta - lo) / (hi - lo) * 63, 0, 63)))
+            lut[s * T + t] = code | (nxt << 6)
+    lut |= tok.astype(np.int64) << 11
+    return lut.astype(np.uint16)
+
+
+# ---- D32-R1: the firmware decoder (main/d32_table.h, main/d32.bsasm) ----
+# build_diff32: no tracking loop, the wrapped difference of sample A's angle
+# in 32 sectors. Picked on the board capture of 2026-11-15 (tools/frame_sweep.py,
+# three sweeps; docs/FINDINGS.md "Colour dots"): colour noise in flat picture
+# 1.80 IRE against 3.06 (U50P64-R1), 2.22 (NL70, the error-dependent tracker
+# above) and 1.37 for a float discriminator on all samples; it passes the
+# colour almost unchanged (burst/sync 0.82 against 0.84). Host model at the
+# edge: line lock 0.945 / 0.954 at 0 dB C/N (deviation 0.7 / 1.0) against
+# 0.960 / 0.946 for U50P64-R1, but it falls off ~1.5-2 dB earlier below and
+# its picture there is 3-4 dB noisier: a strong-signal decoder.
+# D32-R2 (build_d32c) adds click suppression: a phase step no video carrier
+# can make moves the state only 0.7 of the way. Same colour noise (1.80);
+# host model line lock 0.599 / 0.956 at -2 / 0 dB C/N for deviation 0.7
+# (U50P64-R1 0.630 / 0.960) and 0.220 / 0.962 for deviation 1.0 (0.571 /
+# 0.946). Its luma is still 3-4 dB noisier than U50P64-R1 at 2-9 dB C/N.
+import hashlib  # noqa: E402
+import re  # noqa: E402
+
+ROOT = HERE.parent
+MODEL_ID = 'D32-R2'
+HEADER = ROOT / 'main/d32_table.h'
+PROGRAM = ROOT / 'main/d32.bsasm'
+U85Q_PROGRAM = ROOT / 'main/u85q.bsasm'
+
+
+def table():
+    return build_d32c()
+
+
+def digest(t):
+    return hashlib.sha256(np.asarray(t, '<u2').tobytes()).hexdigest()
+
+
+def header_text(t):
+    rows = [', '.join(f'{int(v)}' for v in t[i:i + 16]) for i in range(0, 1024, 16)]
+    return ('/* C5VRX-5 by Twotoz and the C5VRX contributors: the D32-R2 LUT16 (D32C):\n'
+            ' * the angle of sample A in 32 sectors (token), the tracked sector (state),\n'
+            ' * full steps inside the video window -110..+135 degrees and 0.7 of a step\n'
+            ' * outside it (click suppression); DAC = the advance made. U85Q program.\n'
+            ' * Generated by research/nl_tracker.py --write; do not edit by hand. */\n'
+            '#pragma once\n#include <stdint.h>\n\n'
+            f'#define D32_MODEL_ID "{MODEL_ID}"\n'
+            f'#define D32_TABLE_SHA256 "{digest(t)}"\n'
+            'static const uint16_t d32_table[1024] = {\n' + ''.join(f'    {r},\n' for r in rows) + '};\n')
+
+
+def program_text(t):
+    src = U85Q_PROGRAM.read_text()
+    head = ('# C5VRX by Twotoz/contributors: D32-R1, the U85Q program (main/u85q.bsasm) with\n'
+            '# the research/nl_tracker.py table; generated by research/nl_tracker.py --write.\n')
+    body = re.sub(r'^lut [0-9 ]+$', 'lut ' + ' '.join(str(int(v)) for v in t), src, count=1, flags=re.M)
+    body = '\n'.join(line for line in body.split('\n') if not line.startswith('#'))
+    return head + body
+
+
+def gates(t):
+    """Five token bits as the U85Q program expects, and a flat clean-tone transfer."""
+    assert int(t.max() >> 11) <= 31
+    worst = 0.0
+    for radius in (2.0, 4.0, 6.0):
+        for phase in (0.27, 1.1, 2.7, -2.1):
+            for mhz in np.arange(-4.0, 4.01, 0.25):
+                k = np.arange(8000)
+                z = radius * np.exp(2j * np.pi * mhz * 1e6 * k / 40e6 + 1j * phase)
+                raw = (((np.floor(z.real).astype(np.int64) & 15) << 4) |
+                       (np.floor(z.imag).astype(np.int64) & 15)).astype(np.uint8)
+                codes = sim._pair_codes(raw, t, sim.PAIR_BITS, 5)[1000:]
+                err = abs(float(codes.mean()) - (mhz + 6.0) / 15.0 * 63.0)
+                worst = max(worst, err)
+                assert err < 0.6, (radius, phase, mhz, float(codes.mean()))
+    return worst
+
+
+def main():
+    t = table()
+    if '--write' in sys.argv:
+        HEADER.write_text(header_text(t), newline='\n')
+        PROGRAM.write_text(program_text(t), newline='\n')
+    if '--check' in sys.argv or '--write' in sys.argv:
+        assert HEADER.read_text() == header_text(t), 'main/d32_table.h is stale: python research/nl_tracker.py --write'
+        assert PROGRAM.read_text() == program_text(t), 'main/d32.bsasm is stale: python research/nl_tracker.py --write'
+        worst = gates(t)
+        print(f'PASS: {MODEL_ID} header, program and transfer gates (worst tone error {worst:.2f} code, '
+              f'sha256 {digest(t)[:12]})')
+
+
+
+def build_diff32(sectors=32):
+    """D32: no tracking loop. Token = sample A's angle in 32 equal sectors
+    (11.25 degrees), state = the previous token, DAC = the wrapped difference
+    (the sharpest phase difference two lookups can give). Same program and
+    bit routing as U85Q; its own token half (no origin tokens)."""
+    assert sectors == 32
+    bits = sim.PAIR_BITS
+    tok = np.zeros(1024, np.int64)
+    for a in range(1024):
+        word = 0
+        for j in range(10):
+            word |= ((a >> j) & 1) << int(bits[j])
+        za = kp_morph._nibble(word, (4, 5, 6, 7)) + 1j * kp_morph._nibble(word, (0, 1, 2, 3))
+        tok[a] = int(np.floor((math.atan2(za.imag, za.real) + np.pi) * 32 / (2 * np.pi))) % 32
+    lo, hi = (2 * np.pi * f * 1e6 * 50e-9 for f in kp_morph.RANGE_MHZ)
+    lut = np.zeros(1024, np.int64)
+    for s in range(32):
+        for t in range(32):
+            theta = ((t - s + 16) % 32 - 16) * 2 * np.pi / 32
+            code = int(np.rint(np.clip((theta - lo) / (hi - lo) * 63, 0, 63)))
+            lut[s * 32 + t] = code | (t << 6)
+    lut |= tok << 11
+    return lut.astype(np.uint16)
+
+
+def build_d32c(out_gain=0.7, win_lo_deg=-110.0, win_hi_deg=135.0):
+    """D32C (D32-R2): the D32 grid with click suppression. The state follows
+    the observed sector at full speed while the step lies inside the window a
+    composite-video carrier can make in 50 ns (porch -1 MHz, sync to peak
+    white of a deviation-1.0 VTX: about -55..+100 degrees, with room); a step
+    outside it (noise near threshold, a click) moves the state only out_gain
+    of the way. DAC = the advance the state really made. Inside the window it
+    is exactly D32 (colour), outside it holds the line like a loop."""
+    t = build_diff32()
+    tok = t.astype(np.int64) >> 11
+    lo, hi = (2 * np.pi * f * 1e6 * 50e-9 for f in kp_morph.RANGE_MHZ)
+    wl, wh = math.radians(win_lo_deg), math.radians(win_hi_deg)
+    lut = np.zeros(1024, np.int64)
+    for s in range(32):
+        for k in range(32):
+            e = ((k - s + 16) % 32 - 16) * 2 * np.pi / 32
+            gain = 1.0 if wl <= e <= wh else out_gain
+            nxt = int(np.rint(s + gain * e * 32 / (2 * np.pi))) % 32
+            theta = ((nxt - s + 16) % 32 - 16) * 2 * np.pi / 32
+            code = int(np.rint(np.clip((theta - lo) / (hi - lo) * 63, 0, 63)))
+            lut[s * 32 + k] = code | (nxt << 6)
+    lut |= tok << 11
+    return lut.astype(np.uint16)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,10 +1,10 @@
 name: Web tools checks
 on:
   pull_request:
-    paths: ["web/**", "main/**", "tools/prepare_pages_site.sh", ".github/workflows/web-checks.yml"]
+    paths: ["web/**", "main/**", "tools/prepare_pages_site.sh", "test/test_pr_channel_cleanup.py", ".github/workflows/pr-channel-cleanup.yml", ".github/workflows/web-checks.yml"]
   push:
     branches: [main]
-    paths: ["web/**", "main/**", "tools/prepare_pages_site.sh", ".github/workflows/web-checks.yml"]
+    paths: ["web/**", "main/**", "tools/prepare_pages_site.sh", "test/test_pr_channel_cleanup.py", ".github/workflows/pr-channel-cleanup.yml", ".github/workflows/web-checks.yml"]
 permissions:
   contents: read
 jobs:
@@ -19,3 +19,4 @@ jobs:
       - run: node --check web/serial-terminal.js
       - run: node --check web/receiver-console.js
       - run: node --test web/*.test.mjs
+      - run: python3 test/test_pr_channel_cleanup.py

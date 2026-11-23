@@ -9,7 +9,17 @@
  * LP RAM: HP SRAM has under ~5 KB of boot headroom (board 2026-10-26: 5.2 KB
  * more static HP RAM left the USB console silent from boot). */
 #define DC_SERVO_ROW0 54u
-#define DC_SERVO_ROWS 36u
+#define DC_SERVO_TABLE_ROWS 36u        /* servo slots of the table rows G54..G89 */
+#define DC_LOW_STAGES 8u               /* RF stages under the table: G0, 10, 17, 25, 30, 38, 43, 47 */
+/* LOW DC serves stages 4-7 (G30-G53): behind an LNA medium carriers sit
+ * there; G0-G29 only carry very strong carriers (a 5+ cell circle), where
+ * the chip's own DC does no harm, and RAM is tight (heap_min fell to 840 B
+ * with all eight stages and their rows). One servo slot per served stage
+ * after the table rows (LP RAM: ~64 B a slot). */
+#define DC_LOW_STAGE_FIRST 4u
+#define DC_LOW_SLOTS (DC_LOW_STAGES - DC_LOW_STAGE_FIRST)
+#define DC_SERVO_ROWS (DC_SERVO_TABLE_ROWS + DC_LOW_SLOTS)
+#define DC_MODEL_ROWS DC_SERVO_TABLE_ROWS   /* the DC table rows G54..G89, index g - DC_SERVO_ROW0 (HP RAM) */
 #include "dc_servo.h"
 #include "flightlog_format.h"
 
@@ -134,8 +144,27 @@ static uint32_t s_dco_seeds;
 static dco_mask_t s_dco_templ;      /* rows of the current table that come from a template */
 static uint16_t s_dco_serving;      /* dco_filter_key() of the filter the current table is for */
 static bool s_dco_serving_valid;
-static int s_drift_offset[ARC_VENDOR_GAIN_MAX + 1u][2];   /* live trim per row (dco_post_gain) */
-static bool s_drift_set[ARC_VENDOR_GAIN_MAX + 1u];          /* the row has its own trim */
+/* Live trim per row (dco_post_gain): the shared DC model (dc_servo.h),
+ * shared + local; indexed by gain row. */
+static dc_model_t s_dc_model;
+/* Model row of gain row g; DC_MODEL_ROWS (no row) under the DC table. */
+static inline unsigned mrow(unsigned g) { return g >= DC_SERVO_ROW0 && g - DC_SERVO_ROW0 < DC_MODEL_ROWS ? g - DC_SERVO_ROW0 : DC_MODEL_ROWS; }
+/* DC under the table (2026-11-14, EXPERIMENTAL > LOW DC): the rows of the
+ * lower RF stages had no DC hold at all, so the chip's own DC applied there,
+ * 1-2.6 cells off on the board at G46-G51 (blackbox session 389: 12 s
+ * without picture at 7-10 dB C/N behind a ~22 dB LNA, which puts medium
+ * carriers on those rows). Each low row is held on the chip's own bank-2
+ * codes, read once per table context in vendor mode, plus one live trim per
+ * RF stage, servoed on the carrier like the table rows. Bank 1 stays the
+ * chip's own there (phy.c pins it only inside the table span). RAM only,
+ * nothing stored. */
+#define DC_LOW_ROW0 30u                /* first row of stage 4 on the 5 GHz table (rows under it decode lower) */
+#define DC_LOW_ROWS (DC_SERVO_ROW0 - DC_LOW_ROW0)
+static int16_t s_low_base[DC_LOW_ROWS][2];
+static uint8_t s_low_base_ok[(DC_LOW_ROWS + 7u) / 8u];
+static int16_t s_low_trim[DC_LOW_SLOTS][2];
+static uint8_t s_low_slot_row[DC_LOW_SLOTS];
+static uint32_t s_low_holds, s_low_steps, s_low_read_fails;
 static uint32_t s_dco_reloads;      /* dco_select() loads of another table (each drops the trims) */
 static uint8_t s_dco_reload_why;    /* 1 none yet, 2 filter, 3 freq, 4 rows, 5 band, 6 IQ scale, 7 version */
 
@@ -249,9 +278,12 @@ void dco_select(void)
                        s_dco.iq_scale_sel != want.iq_scale_sel ? 6u : 7u;
     s_dco_serving = want.key;
     s_dco_serving_valid = true;
-    memset(s_drift_offset, 0, sizeof(s_drift_offset));   /* trims belong to the table they were made on */
+    dc_model_reset(&s_dc_model);   /* trims belong to the table they were made on */
+    /* the chip's own low-row codes belong to the channel/filter too */
+    memset(s_low_base_ok, 0, sizeof(s_low_base_ok));
+    memset(s_low_trim, 0, sizeof(s_low_trim));
+    memset(s_low_slot_row, 0, sizeof(s_low_slot_row));
     receiver_dc_reset_all();
-    memset(s_drift_set, 0, sizeof(s_drift_set));
     dco_load_table(&want);
     dco_preset_fill();
 }
@@ -300,15 +332,12 @@ static void dco_load_table(const dco_want_t *w)
  * 2026-10-19, weak VTX after the live switch to MATCHED: G71 trimmed +8/+13
  * to 0.3 cells, while G77, never trimmed, sat at 3.9/3.5 cells for minutes
  * as Direct Gain moved between them, and the picture was gone. */
+/* Since 2026-11-14 the common part is a model term of its own (dc_servo.h
+ * dc_model_t): shared by every row, also after rows have their own trims. */
 static int dco_offset(unsigned g, unsigned axis)
 {
     if (g > ARC_VENDOR_GAIN_MAX) return 0;
-    if (s_drift_set[g]) return s_drift_offset[g][axis];
-    for (unsigned d = 1; d <= ARC_VENDOR_GAIN_MAX; ++d) {
-        if (g >= d && s_drift_set[g - d]) return s_drift_offset[g - d][axis];
-        if (g + d <= ARC_VENDOR_GAIN_MAX && s_drift_set[g + d]) return s_drift_offset[g + d][axis];
-    }
-    return 0;
+    return mrow(g) < DC_MODEL_ROWS ? dc_model_offset(&s_dc_model, mrow(g), axis, dco_mask_get(s_dco_templ, g)) : 0;
 }
 
 static int dco_trimmed(unsigned g, unsigned axis)
@@ -345,11 +374,47 @@ static void dco_preset_fill(void)
                   s_dco.freq, cls, n, (unsigned)DCO_PRESET_BOARDS);
 }
 
+/* The LOW DC slot of row g (0..DC_LOW_SLOTS-1: its RF stage minus
+ * DC_LOW_STAGE_FIRST), -1 for the table rows, the stages LOW DC does not
+ * serve, a row the table cannot decode or LOW DC switched off. */
+static int dc_low_stage(unsigned g)
+{
+    if (experimental_get(EXP_LOW_DC) || g < DC_LOW_ROW0 || g >= DC_SERVO_ROW0 || g >= s_dco.lo) return -1;
+    arc_gain_tuple_t tuple;
+    if (!arc_gain_tuple_decode(rf_gain_table(), (uint8_t)g, &tuple) || tuple.rf_stage < DC_LOW_STAGE_FIRST ||
+        tuple.rf_stage >= DC_LOW_STAGES) return -1;
+    return (int)(tuple.rf_stage - DC_LOW_STAGE_FIRST);
+}
+static inline unsigned low_idx(unsigned g) { return g - DC_LOW_ROW0; }
+static inline bool low_base_ok(unsigned g) { return (s_low_base_ok[low_idx(g) >> 3] >> (low_idx(g) & 7u)) & 1u; }
+
+/* A low row: the chip's own bank-2 codes (read once, in vendor mode right
+ * after the gain write) plus its stage's live trim. */
+static bool dco_low_codes(uint8_t g, int code[2])
+{
+    const int st = dc_low_stage(g);
+    if (st < 0 || s_dco.freq != rf_frequency_mhz()) return false;
+    if (!low_base_ok(g)) {
+        int pair[2];
+        if (phy_dco_held() || !phy_dco_read_pair(pair)) { ++s_low_read_fails; return false; }
+        s_low_base[low_idx(g)][0] = (int16_t)pair[0];
+        s_low_base[low_idx(g)][1] = (int16_t)pair[1];
+        s_low_base_ok[low_idx(g) >> 3] |= (uint8_t)(1u << (low_idx(g) & 7u));
+    }
+    for (unsigned a = 0; a < 2; ++a) {
+        const int v = s_low_base[low_idx(g)][a] + s_low_trim[st][a];
+        code[a] = v < 0 ? 0 : v > 511 ? 511 : v;
+    }
+    ++s_low_holds;
+    return true;
+}
+
 /* The codes gain g holds: its row (own, template or base map) with its live
- * trim. False = nothing to hold (the chip's own DC). */
+ * trim, or a low row (dco_low_codes). False = nothing to hold (the chip's own DC). */
 static bool dco_hold_codes(uint8_t g, int code[2], bool *preset)
 {
     *preset = false;
+    if (g < s_dco.lo && g < DC_SERVO_ROW0) return g >= DC_LOW_ROW0 && dco_low_codes(g, code);
     if (g < s_dco.lo || g > s_dco.hi || s_dco_banned[g] || s_dco.freq != rf_frequency_mhz() ||
         s_dco.e[g].valid != DCO_ROW_OK) return false;
     code[0] = dco_trimmed(g, 0);
@@ -677,7 +742,13 @@ static const char *dco_quiet_rows(bool manual, bool refine, int64_t deadline, co
                           dco_rows(0) + (refine ? dco_template_rows() : 0u);
     unsigned done = 0;
     const char *why = "done";
+    /* Rows over the useful top (receiver_gain_top): behind an external LNA
+     * the receiver noise folds there (board 2026-11-14: G72 and up), so a
+     * quiet search reads no DC and the carrier gate stops the whole run
+     * before the rows the edge uses (G50-G67). No gain model uses them. */
+    const int gtop = receiver_gain_top();
     for (int g = s_dco.hi; g >= (int)s_dco.lo; --g) {
+        if (g > gtop) continue;
         if (!manual && s_dco.e[g].valid && !(refine && dco_mask_get(s_dco_templ, (unsigned)g)))
             continue;                                             /* own codes or floor */
         char line2[48];
@@ -927,7 +998,7 @@ void dco_startup_profiles(bool manual, int64_t deadline)
         printf("DCO startup profile_filter bw20=%u code=%d skirt=%u\n", (unsigned)todo[k].bw20, todo[k].code,
                (unsigned)todo[k].skirt);
         if (!rf_set_filter(todo[k])) continue;
-        receiver_set_gain(rf_gain_table()->max_index);
+        receiver_set_gain(receiver_gain_top());
         vTaskDelay(pdMS_TO_TICKS(50));
         dco_startup(manual, deadline);
         dco_ready_note();
@@ -1015,7 +1086,7 @@ static uint8_t s_adopt_run[ARC_VENDOR_GAIN_MAX + 1u];
 uint32_t s_dco_adopted;
 static bool s_dc_fault;
 static RTC_FAST_ATTR dc_servo_t s_servo;
-_Static_assert(DC_SERVO_ROW0 + DC_SERVO_ROWS == ARC_VENDOR_GAIN_MAX + 1u, "servo rows end at the table maximum");
+_Static_assert(DC_SERVO_ROW0 + DC_SERVO_TABLE_ROWS == ARC_VENDOR_GAIN_MAX + 1u, "table servo rows end at the table maximum");
 static bool s_servo_ready;
 /* No step: state (menu, scan, startup), row without codes or another table,
  * sampling phase not settled, PHY busy, write refused. */
@@ -1042,13 +1113,17 @@ static void dc_trim_invalidate(void)
     ++s_gain_epoch; /* A physical DC change invalidates amplitude/CN evidence too. */
 }
 
-/* A row's codes changed (its own offset, or the offset an untrimmed row
- * takes from its nearest trimmed one): its sums no longer describe them. */
-static void servo_rows_changed(unsigned g)
+/* A row's codes changed (its own offset, the offset a template row inherits,
+ * or the shared part every row carries): their sums no longer describe them,
+ * and their last servo step is no evidence for the next mean. */
+static void servo_rows_changed(unsigned g, bool shared)
 {
     receiver_dc_reset_row((uint8_t)g);
-    for (unsigned r = s_dco.lo; r <= s_dco.hi && r <= ARC_VENDOR_GAIN_MAX; ++r)
-        if (!s_drift_set[r]) receiver_dc_reset_row((uint8_t)r);
+    for (unsigned r = s_dco.lo; r <= s_dco.hi && r <= ARC_VENDOR_GAIN_MAX; ++r) {
+        if (r == g || (!shared && ((mrow(r) < DC_MODEL_ROWS && s_dc_model.own[mrow(r)]) || !dco_mask_get(s_dco_templ, r)))) continue;
+        receiver_dc_reset_row((uint8_t)r);
+        if (r >= DC_SERVO_ROW0) dc_servo_forget_step(&s_servo, r - DC_SERVO_ROW0);
+    }
 }
 
 /* Write a step to the active row's DAC pair (one axis per write, checked
@@ -1092,6 +1167,63 @@ static bool dc_servo_can_fix(unsigned g)
         s_dco.e[g].valid != DCO_ROW_OK || s_dco_banned[g]) return false;
     const int lim = dc_trim_max(g);
     return abs(dco_offset(g, 0)) < lim && abs(dco_offset(g, 1)) < lim;
+}
+
+/* The rows under the table (dco_low_codes): one servo slot and one trim per
+ * RF stage. The trim moves every row of the stage, so a step resets the
+ * stage's sums; a visit to another row of the stage is no evidence for the
+ * slot's last step (forgotten). The same means, sign-bit bracketing and
+ * trim limit as the template rows; no adoption, nothing stored. */
+static void servo_low_rows(void)
+{
+    for (unsigned g = DC_LOW_ROW0; g < s_dco.lo && g < DC_SERVO_ROW0; ++g) {
+        const int st = dc_low_stage(g);
+        if (st < 0 || !low_base_ok(g)) continue;
+        const unsigned slot = DC_SERVO_TABLE_ROWS + (unsigned)st;
+        int64_t si, sq;
+        uint32_t samples, neg[2], need = DC_SERVO_MIN_SAMPLES, peek_neg[2], peek_n;
+        if (receiver_dc_peek_row((uint8_t)g, peek_neg, &peek_n) && peek_n >= DC_SERVO_FAST_SAMPLES &&
+            (dc_servo_saturated(dc_servo_pneg(peek_neg[0], peek_n)) || dc_servo_saturated(dc_servo_pneg(peek_neg[1], peek_n))))
+            need = DC_SERVO_FAST_SAMPLES;
+        if (!receiver_dc_take_row((uint8_t)g, need, &si, &sq, neg, &samples)) continue;
+        if (samples < DC_SERVO_MIN_SAMPLES) {
+            si = si * (int64_t)DC_SERVO_MIN_SAMPLES / (int64_t)samples;
+            sq = sq * (int64_t)DC_SERVO_MIN_SAMPLES / (int64_t)samples;
+            neg[0] = (uint32_t)((uint64_t)neg[0] * DC_SERVO_MIN_SAMPLES / samples);
+            neg[1] = (uint32_t)((uint64_t)neg[1] * DC_SERVO_MIN_SAMPLES / samples);
+            samples = DC_SERVO_MIN_SAMPLES;
+        }
+        int dc[2];
+        if (!dc_servo_mean(si, sq, samples, dc)) continue;
+        const int pneg[2] = {dc_servo_pneg(neg[0], samples), dc_servo_pneg(neg[1], samples)};
+        if (g == s_current_gain) { s_servo_dc[0] = dc[0]; s_servo_dc[1] = dc[1]; s_servo_dc_us = esp_timer_get_time(); }
+        if (s_low_slot_row[st] != g) { dc_servo_forget_step(&s_servo, slot); s_low_slot_row[st] = (uint8_t)g; }
+        int step[2];
+        dc_servo_decide_sign(&s_servo, slot, dc, pneg, step);
+        for (int a = 0; a < 2; ++a) {
+            if (s_low_trim[st][a] + step[a] > DC_TRIM_MAX_TEMPLATE) step[a] = DC_TRIM_MAX_TEMPLATE - s_low_trim[st][a];
+            if (s_low_trim[st][a] + step[a] < -DC_TRIM_MAX_TEMPLATE) step[a] = -DC_TRIM_MAX_TEMPLATE - s_low_trim[st][a];
+        }
+        if (!step[0] && !step[1]) continue;
+        int applied[2] = {step[0], step[1]};
+        bool fault = false;
+        if (g == s_current_gain && phy_dco_held() && !servo_write_active((uint8_t)g, step, applied, &fault)) {
+            if (!fault) { ++s_servo_skip[3]; continue; }
+            s_dc_fault = true;
+            (void)receiver_pause("DC_LIVE_RESTORE_FAILED");
+            printf("DC_SERVO fault=restore_failed gain=%u (low stage %d); gain owner paused\n", g, st + (int)DC_LOW_STAGE_FIRST);
+            const uint8_t code = 1;
+            flightlog_event(FLOG_E_FAULT, &code, 1);
+            return;
+        }
+        s_low_trim[st][0] = (int16_t)(s_low_trim[st][0] + applied[0]);
+        s_low_trim[st][1] = (int16_t)(s_low_trim[st][1] + applied[1]);
+        for (unsigned r = DC_LOW_ROW0; r < s_dco.lo && r < DC_SERVO_ROW0; ++r)
+            if (dc_low_stage(r) == st) receiver_dc_reset_row((uint8_t)r);
+        dc_servo_applied(&s_servo, slot, dc, applied);
+        ++s_low_steps;
+        ++s_servo_writes;
+    }
 }
 
 void servo_service(void)
@@ -1163,19 +1295,14 @@ void servo_service(void)
         const bool carrier = video_recent();
         if (dco_mask_get(s_dco_templ, g) && abs(dc[0]) <= DC_ADOPT_MCELLS && abs(dc[1]) <= DC_ADOPT_MCELLS) {
             if (++s_adopt_run[g] >= (carrier ? DC_ADOPT_RUN_CARRIER : DC_ADOPT_RUN)) {
-                /* Rows without their own trim inherit the nearest one's:
-                 * pin theirs before this row's trim goes into its codes. */
-                for (unsigned k = s_dco.lo; k <= s_dco.hi && k <= ARC_VENDOR_GAIN_MAX; ++k) {
-                    if (s_drift_set[k]) continue;
-                    s_drift_offset[k][0] = dco_offset(k, 0);
-                    s_drift_offset[k][1] = dco_offset(k, 1);
-                    s_drift_set[k] = true;
-                }
+                /* The trim goes into the row's codes; the model keeps its
+                 * offset and what its template neighbours inherit (no more
+                 * pinning every row: that stopped all sharing). */
                 for (int a = 0; a < 2; ++a) {
                     s_dco.e[g].code[a] = (int16_t)dco_trimmed(g, (unsigned)a);
                     s_dco.e[g].residual_mcells[a] = (int16_t)dc[a];
-                    s_drift_offset[g][a] = 0;
                 }
+                dc_model_adopt(&s_dc_model, mrow(g), true);
                 const bool was_preset = dco_mask_get(s_dco_preset, g);
                 dco_row_measured(g);
                 dco_mask_put(s_dco_preset, g, false);
@@ -1189,6 +1316,9 @@ void servo_service(void)
         } else {
             s_adopt_run[g] = 0;
         }
+        const bool templ = dco_mask_get(s_dco_templ, g);
+        dc_model_note(&s_dc_model, mrow(g), dc, pneg[0] < DC_SERVO_PNEG_LO || pneg[0] > DC_SERVO_PNEG_HI ||
+                                          pneg[1] < DC_SERVO_PNEG_LO || pneg[1] > DC_SERVO_PNEG_HI);
         int step[2];
         dc_servo_decide_sign(&s_servo, sr, dc, pneg, step);
         const int base[2] = {dco_offset(g, 0), dco_offset(g, 1)};
@@ -1211,13 +1341,12 @@ void servo_service(void)
             flightlog_event(FLOG_E_FAULT, &code, 1);
             return;
         }
-        s_drift_offset[g][0] = base[0] + applied[0];
-        s_drift_offset[g][1] = base[1] + applied[1];
-        s_drift_set[g] = true;
-        servo_rows_changed(g);
+        const bool shared = dc_model_apply(&s_dc_model, mrow(g), applied, templ);
+        servo_rows_changed(g, shared);
         dc_servo_applied(&s_servo, sr, dc, applied);
         ++s_servo_writes;
     }
+    servo_low_rows();
 }
 static cal_persist_t s_dc_persist;
 
@@ -1313,7 +1442,7 @@ void noise_map_startup(int64_t deadline)
     /* Every row while the noise is real (it is the gain measurement of the
      * edge rows, gain.c dg_apply_measured_gain), every 3rd below. */
     bool fine = true;
-    for (int g = (int)rf_gain_table()->max_index; g >= 54 && esp_timer_get_time() < deadline; g -= fine ? 1 : 3) {
+    for (int g = (int)receiver_gain_top(); g >= 54 && esp_timer_get_time() < deadline; g -= fine ? 1 : 3) {
         const unsigned ck = (unsigned)g - NOISE_CACHE_LO;
         if (ck < NOISE_CACHE_ROWS && s_noise_cache[ck].time &&
             esp_timer_get_time() - s_noise_cache[ck].time <= 30000000LL &&
@@ -1509,13 +1638,27 @@ void cal_dc_print(rf_filter_t f)
            "adopted=%lu urgent_wakes=%lu fast=%lu brackets=%lu skip=%lu/%lu/%lu/%lu/%lu fault=%u\n", s_servo_dc[0], s_servo_dc[1],
            s_servo.slope[0], s_servo.slope[1], s_servo.known[0], s_servo.known[1], s_servo.pol_votes[0],
            s_servo.pol_votes[1], dco_offset(s_current_gain, 0), dco_offset(s_current_gain, 1),
-           s_current_gain <= ARC_VENDOR_GAIN_MAX ? (unsigned)s_drift_set[s_current_gain] : 0u,
+           mrow(s_current_gain) < DC_MODEL_ROWS ? (unsigned)s_dc_model.own[mrow(s_current_gain)] : 0u,
            (unsigned long)s_servo.steps, (unsigned long)s_servo_writes, (unsigned long)s_servo_estimates,
            (unsigned long)s_servo.learned, (unsigned long)s_servo.relearned, (unsigned long)s_servo.sign_rejects,
            (unsigned long)s_servo.turns, (unsigned long)s_servo.forgotten, (unsigned long)s_dco_adopted,
            (unsigned long)s_dc_urgent_wakes, (unsigned long)s_servo_fast, (unsigned long)s_servo.brackets,
            (unsigned long)s_servo_skip[0], (unsigned long)s_servo_skip[1],
            (unsigned long)s_servo_skip[2], (unsigned long)s_servo_skip[3], (unsigned long)s_servo_skip[4], s_dc_fault);
+    printf("DC_MODEL shared=%d/%d shared_steps=%lu local_steps=%lu settled=%u strikes=%u (dc_servo.h: one DC shift common to "
+           "the rows plus a local part per template row)\n", s_dc_model.shared[0], s_dc_model.shared[1],
+           (unsigned long)s_dc_model.shared_steps, (unsigned long)s_dc_model.local_steps,
+           mrow(s_current_gain) < DC_MODEL_ROWS ? (unsigned)s_dc_model.settled[mrow(s_current_gain)] : 0u,
+           mrow(s_current_gain) < DC_MODEL_ROWS ? (unsigned)s_dc_model.strikes[mrow(s_current_gain)] : 0u);
+    {
+        const int st = dc_low_stage(s_current_gain);
+        printf("DC_LOW on=%u holds=%lu steps=%lu read_fails=%lu stage=%d trim=%d/%d base=%d/%d (rows G30-G53 under the DC table: "
+               "the chip's own codes plus one trim per RF stage; EXPERIMENTAL > LOW DC)\n",
+               !experimental_get(EXP_LOW_DC), (unsigned long)s_low_holds, (unsigned long)s_low_steps,
+               (unsigned long)s_low_read_fails, st >= 0 ? st + (int)DC_LOW_STAGE_FIRST : -1, st >= 0 ? s_low_trim[st][0] : 0, st >= 0 ? s_low_trim[st][1] : 0,
+               st >= 0 && low_base_ok(s_current_gain) ? s_low_base[low_idx(s_current_gain)][0] : -1,
+               st >= 0 && low_base_ok(s_current_gain) ? s_low_base[low_idx(s_current_gain)][1] : -1);
+    }
     printf("DCO_BAN unbans=%lu deferred_to_servo=%lu (a hold is released for 2-32 s only where the servo cannot trim it)\n",
            (unsigned long)s_dco_unbans, (unsigned long)s_dco_guard_deferred);
     printf("DCO_ADOPT disabled=manual_only\n");

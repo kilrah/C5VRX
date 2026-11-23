@@ -20,14 +20,24 @@
  * arrive: 25 mW (14 dBm), 2 dBi each side, 10 m at 5.8 GHz is ~-50 dBm.
  * The difference is what is lost before the chip.
  *
- * The noise is learned per channel with no carrier (VTX off, at the table
- * maximum): on the board it read 1.7 dB above the 5180 MHz calibration at
- * 5865 MHz, the edge of the C5's documented range. The carrier is the pin
- * level minus that noise; until it is learned the calibration is used. */
+ * The noise comes first from C/N-AUTO's noise map (cn_auto.h) of this
+ * channel and filter: the highest row that measured real noise, referred to
+ * the pin like the probes (rx_level_noise_from_map). That works with and
+ * without an external LNA: bare, the top row measures and the reference is
+ * the calibration's (on the board 1.7 dB above it at 5865 MHz, the edge of
+ * the C5's documented range); behind an LNA the top rows clip and the
+ * highest clean row carries the LNA's gain and noise. The older reference,
+ * learned with no carrier at the table maximum within -3..+4 dB of the
+ * calibration, never learned behind an LNA (2026-11-14: VTX off read as a
+ * -79.5 dBm carrier, noise 17 dB over the calibration at G65-G67); it stays
+ * the fallback while the map has no row, then the calibration. The carrier
+ * is the pin level minus that noise. */
 #pragma once
 #include <math.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include "cn_auto.h"
 
 #define RX_LEVEL_NOISE_DBM      (-96.7f)   /* thermal noise at G83, default filter */
 #define RX_LEVEL_NOISE_CELLS2   4.76f
@@ -82,6 +92,57 @@ static inline rx_level_t rx_level_compute(const uint32_t sum_x16[RX_LEVEL_ROWS],
     r.carrier_dbm_x10 = r.above_noise ? (int)lround(10.0 * (RX_LEVEL_NOISE_DBM + 10.0 * log10(carrier))) : r.input_dbm_x10;
     r.cn_x10 = r.above_noise ? (int)lround(100.0 * log10(carrier / noise_rel)) : -990;
     return r;
+}
+
+/* The receiver's noise at the pin, in units of the G83 calibration noise,
+ * from a C/N-AUTO noise map: the highest row up to `max_index` with its own
+ * measurement of real noise (not quantisation-limited), its thermal share
+ * referred to the pin with the gain model, as rx_level_compute refers the
+ * probes. The highest row has the largest thermal share and the smallest
+ * model distance to the calibration. 0 when the map has no such row;
+ * *row_out is the row used (255 = none). */
+/* A row whose noise reads over this was learned while the noise itself
+ * clipped the 4-bit window (behind an LNA: G72 read 19.8 cells^2, 0.8 dB
+ * under the G66 row referred up, board 2026-11-14). Such a row is used only
+ * when the map has no other: then the lowest, the least clipped.
+ * clip_floor (optional, cells^2 per row, 0 = none): the power of no-carrier
+ * windows that clipped, which C/N-AUTO does not learn: a lower bound of the
+ * row's noise, used like a clipped map row. Without it a gain model parked
+ * on a clipping row never got a reference: every window there clipped, the
+ * map stayed empty and LEVEL kept the bare-board default (board 2026-11-14,
+ * G72, 17701 folds, no move). */
+#define RX_LEVEL_MAP_CLEAN_CELLS2 12.0f
+static inline float rx_level_noise_from_map_floor(const cna_noise_map_t *m, const float *clip_floor,
+                                                  const int16_t model_q8[RX_LEVEL_ROWS], unsigned max_index,
+                                                  uint8_t *row_out)
+{
+    *row_out = 255u;
+    int clean = -1, clipped = -1;
+    float clipped_v = 0.0f;
+    for (int g = (int)(max_index < RX_LEVEL_ROWS ? max_index : RX_LEVEL_ROWS - 1u); g >= 0; --g) {
+        const bool own = m->n[g] >= CNA_MIN_SAMPLES && m->noise[g] >= CNA_QLIM_CELLS2 &&
+                         m->noise[g] - RX_LEVEL_QUANT_CELLS2 > 0.0f;
+        if (own && m->noise[g] <= RX_LEVEL_MAP_CLEAN_CELLS2) { clean = g; break; }
+        /* A clipped map row, or any row with a fresh clipped-window bound
+         * (also under 12 cells^2: a row whose few clipped peaks the learning
+         * refused). The lowest one is kept: the least clipped. */
+        const float fl = clip_floor ? clip_floor[g] : 0.0f;
+        const float v = (own ? m->noise[g] : 0.0f) > fl ? m->noise[g] : fl;
+        if (((own && m->noise[g] > RX_LEVEL_MAP_CLEAN_CELLS2) || fl > 0.0f) && v - RX_LEVEL_QUANT_CELLS2 > 0.0f) {
+            clipped = g; clipped_v = v;
+        }
+    }
+    const int g = clean >= 0 ? clean : clipped;
+    if (g < 0) return 0.0f;
+    const double thermal = (double)(clean >= 0 ? m->noise[g] : clipped_v) - RX_LEVEL_QUANT_CELLS2;
+    const double to_pin = pow(10.0, (double)(model_q8[max_index] - model_q8[g]) / 2560.0);
+    *row_out = (uint8_t)g;
+    return (float)(thermal * to_pin / RX_LEVEL_NOISE_CELLS2);
+}
+static inline float rx_level_noise_from_map(const cna_noise_map_t *m, const int16_t model_q8[RX_LEVEL_ROWS],
+                                            unsigned max_index, uint8_t *row_out)
+{
+    return rx_level_noise_from_map_floor(m, NULL, model_q8, max_index, row_out);
 }
 
 /* A carrier is shown only on evidence: 1 dB over the noise reference is

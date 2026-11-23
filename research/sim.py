@@ -142,12 +142,16 @@ def raster_legacy(standard, seed, fields=2):
 
 def make_case(seed, cnr_db, standard='PAL', deviation=1.0, rms=4.2, filter_hz=None,
               porch_hz=PORCH_HZ, offset_hz=0.0, fields=2, physical_adc=False, adc_gain=None, white_scale=1.0,
-              legacy_raster=False):
+              legacy_raster=False, flat_ire=None):
     """Raw IQ bytes (noisy and noise-free) plus the goggle-filtered truth.
     filter_hz: -3 dB full width of an extra 4th-order analog filter (None =
-    the C5's normal ~20 MHz channel only). offset_hz: residual AFC error."""
+    the C5's normal ~20 MHz channel only). offset_hz: residual AFC error.
+    flat_ire: replace the textured picture by one flat grey level (IRE), for
+    picture-noise (grain) studies; None keeps the textured raster."""
     rng = np.random.default_rng(seed)
     ire, region = (raster_legacy if legacy_raster else raster)(standard, seed + 7, fields)
+    if flat_ire is not None:
+        ire = np.where(region == 1, float(flat_ire), ire)
     # Optional research stress: unequal sync/picture deviation (issue #200
     # reported levels). White scale1.0 retains the chosen raster's levels;
     # historical multi-field inputs additionally require legacy_raster=True.

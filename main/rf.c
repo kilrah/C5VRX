@@ -18,6 +18,9 @@
 #include "nvs_flash.h"
 #include "experimental.h"
 #include "soc/gpio_sig_map.h"
+#ifdef HWX_MENU_ON_IQ
+#include "hal/parlio_periph.h"
+#endif
 #include "soc/lp_aon_reg.h"
 
 #define REG32(a)         (*(volatile uint32_t *)(uintptr_t)(a))
@@ -113,7 +116,31 @@ esp_err_t rf_set_lane(unsigned lane)
     return result;
 }
 
+/* Live route change (STRONG LANE, receiver.c): the eight GPIO-matrix output
+ * selects only, on pins route_modem_iq configured at boot. No PHY register;
+ * the caller invalidates the observations made on the old lane. */
+void rf_reroute_lane(unsigned lane)
+{
+    if (lane >= RF_LANES) return;
+    for (unsigned k = 0; k < 8; ++k)
+        esp_rom_gpio_connect_out_signal(s_iq_pins[k], MODEM_DIAG0_IDX + s_lane_diag[lane][k], false, false);
+    __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+    s_lane = lane;
+}
+
 unsigned rf_lane(void) { return s_lane; }
+
+#ifdef HWX_MENU_ON_IQ
+/* GPIO matrix output selects only; the pads stay configured by
+ * route_modem_iq. PARLIO TX data bit k -> IQ pad k. */
+void rf_hwx_pads_tx(bool tx)
+{
+    for (unsigned k = 0; k < 8; ++k)
+        esp_rom_gpio_connect_out_signal(s_iq_pins[k], tx ? soc_parlio_signals[0].tx_units[0].data_sigs[k]
+                                                         : MODEM_DIAG0_IDX + s_lane_diag[s_lane][k], false, false);
+    __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+}
+#endif
 const char *rf_lane_name(unsigned lane) { return lane < RF_LANES ? s_lane_names[lane] : "?"; }
 
 static void enable_continuous_modem(void)

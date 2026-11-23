@@ -53,7 +53,7 @@ typedef struct {
     uint8_t rf_code, bb_code, fine_code;
     int16_t p95, cfo_khz;
     uint32_t gain_writes, fade_holds, overloads, faults;
-    uint8_t gain, gain_max; /* mean gain index of the second, table maximum */
+    uint8_t gain, gain_max; /* mean gain index of the second, useful top (receiver_gain_top) */
     uint8_t rf_stage;       /* vendor RF stage of the gain */
     int16_t p50;            /* observer envelope median (ultrafine cells^2 x16) */
     int16_t coherence;      /* observer phase coherence, % */

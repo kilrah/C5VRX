@@ -465,7 +465,11 @@ void dg_reset_context(direct_gain_t *g, const arc_gain_table_t *table, uint8_t c
         g->model_db_q8[k] = (int16_t)(6 * 256 * (int)t->rf_stage + 6 * (int)bits_q8 + 212 * (5 - (int)t->fine_code));
     }
     keel_build(g);
-    g->current_gain = (uint8_t)clamp_i(current_gain, 20, g->table.max_index);
+    /* The receiver floor (apply_target, KEEL-1 home rows) is G2. A floor of
+     * G20 here left the core above a hardware gain under G20, and receiver.c
+     * rebinds on every window where the two differ: never reached on the bare
+     * board (close in G21/G24), every window with an external LNA close in. */
+    g->current_gain = (uint8_t)clamp_i(current_gain, 2, g->table.max_index);
     g->target_gain = g->current_gain;
     g->writes = c_writes; g->writes_moderate = c_mod; g->writes_severe = c_sev; g->overloads = c_ovl;
     g->holds = c_holds; g->bursts_ignored = c_bursts; g->one_sided_clips = c_one; g->writes_refused = c_ref;
@@ -490,7 +494,7 @@ void dg_reset_context(direct_gain_t *g, const arc_gain_table_t *table, uint8_t c
     g->map_context = wanted;
     if (keep) (void)dg_import_map(g, &kept);
     if (same_receiver) {
-        g->anchor_valid = anchor_valid && anchor_gain >= 20u && anchor_gain <= g->table.max_index;
+        g->anchor_valid = anchor_valid && anchor_gain >= 2u && anchor_gain <= g->table.max_index;
         g->anchor_gain = anchor_gain;
         g->anchor_us = anchor_us;
         g->carrier_us = carrier_us;

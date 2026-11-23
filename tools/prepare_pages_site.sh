@@ -62,8 +62,10 @@ for attempt in 1 2 3; do
 done
 
 # Keep a bounded history of legacy C5VRX-3 releases plus the C5VRX-5 channel
-# (versioned main builds and unmerged PR builds). Legacy archive, C5VRX-3 PR
-# and C5VRX-4 alpha releases are no longer offered by the flasher.
+# (versioned main builds and unmerged PR builds), plus the newest 10
+# versions (c5vrx5-hwx-<id>-v5.0.N) and the PR channels of every hardware
+# experiment. Legacy archive, C5VRX-3 PR and C5VRX-4 alpha releases are no
+# longer offered by the flasher.
 jq '
   [ .[] | select(.draft == false) ] as $all
   | ($all
@@ -77,7 +79,15 @@ jq '
   | ($all
       | map(select(.prerelease == true and (.tag_name | test("^c5vrx5-pr-[0-9]+$"))))
       | sort_by(.published_at) | reverse) as $v5_prs
-  | ($versions + $v5 + $v5_prs)
+  | ($all
+      | map(select(.tag_name | test("^c5vrx5-hwx-[a-z0-9_]+-v5\\.[0-9]+\\.[0-9]+$")))
+      | group_by(.tag_name | capture("^c5vrx5-hwx-(?<id>[a-z0-9_]+)-").id)
+      | map(sort_by(.published_at) | reverse | .[:10]) | add // []) as $hwx_versions
+  | ($all
+      | map(select(.prerelease == true and (.tag_name | test("^c5vrx5-hwx-[a-z0-9_]+-pr-[0-9]+$"))))
+      | sort_by(.published_at) | reverse) as $hwx_prs
+  | ($hwx_versions + $hwx_prs) as $hwx
+  | ($versions + $v5 + $v5_prs + $hwx)
 ' "${tmp_dir}/all-releases.json" > "${tmp_dir}/selected-releases.json"
 
 count="$(jq 'length' "${tmp_dir}/selected-releases.json")"

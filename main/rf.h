@@ -11,13 +11,20 @@
 
 /* Shared MODEM_DIAG output / PARLIO RX input order: Q low..high, I low..high.
  * I's low bit uses the XIAO user-LED GPIO27 instead of D10/GPIO10, freeing
- * D10 for a future seventh DAC branch. Q's sign bit moves from D3/GPIO7
- * to GPIO2, reserving D3 for a future eighth branch. GPIO2 is exclusively
+ * D10 for the optional 40 MHz TX clock. Q's sign bit moves from D3/GPIO7
+ * to GPIO2, freeing D3 for DAC bit 2 when Clock Pin D10 is enabled. GPIO2 is exclusively
  * IQ-owned and cannot export the optional sample clock (PR #257).
  * GPIO27 is exclusively IQ-owned: do not drive it as a status LED. The LED/resistor remains connected; 40 MS/s capture and
  * sampling-phase margin on an unmodified XIAO still need board validation.
- * These are GPIO-matrix loopbacks; no external IQ wiring is required. */
-#ifdef C5VRX_P4LINK
+ * These are GPIO-matrix loopbacks; no external IQ wiring is required.
+ * A hardware experiment build (-DC5VRX_HWX=<id>, hardware_experiments/<id>/
+ * hwx.h) may replace the pads; production never includes hwx.h. */
+#ifdef C5VRX_HWX
+#include "hwx.h"
+#endif
+#ifdef HWX_IQ_GPIO_NUMS
+#define RF_IQ_GPIO_NUMS HWX_IQ_GPIO_NUMS
+#elif defined(C5VRX_P4LINK)
 /* FireBeetle 2 ESP32-C5 as the P4's tuner (docs/P4LINK.md): the loopback
  * uses the pads the link (GPIO2..8, 11/12, 26/27), USB (13/14) and GPIO0
  * (3V3_C switch) leave: the GDI display connector's SPI/I2C/control lines
@@ -73,6 +80,15 @@ static inline bool rf_filter_equal(rf_filter_t a, rf_filter_t b)
 enum { RF_LANE_COARSE, RF_LANE_FINE, RF_LANE_ULTRAFINE, RF_LANES };
 esp_err_t rf_set_lane(unsigned lane);
 unsigned rf_lane(void);
+void rf_reroute_lane(unsigned lane);   /* live, GPIO matrix only (STRONG LANE) */
+/* Hardware experiment HWX_MENU_ON_IQ (hwx.h): true puts PARLIO TX (the menu
+ * raster) on the eight IQ pads instead of MODEM_DIAG, false routes MODEM_DIAG
+ * back. Production: a no-op. */
+#ifdef HWX_MENU_ON_IQ
+void rf_hwx_pads_tx(bool tx);
+#else
+static inline void rf_hwx_pads_tx(bool tx) { (void)tx; }
+#endif
 const char *rf_lane_name(unsigned lane);
 
 typedef struct { const char *name; uint16_t freq_mhz; } fpv_channel_t;

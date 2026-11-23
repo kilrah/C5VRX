@@ -9,7 +9,9 @@ export const BAND_NAMES = {
 export const KP_MODES = ['OFF', 'AUTO kp', 'AUTO kp+LP (legacy firmware)'];
 // Keys the firmware routes through control.c command(): ignored while a
 // calibration/lane-test status screen owns the picture.
-export const MENU_COMMAND_KEYS = new Set(['o', 'e', 'v', 'f', 'n', 'x', 'c', 'b', 's', 'g', 'A', 'U', 'G', 'Q', 'Z']);
+export const MENU_COMMAND_KEYS = new Set(['o', 'e', 'v', 'f', 'n', 'x', 'c', 'b', 's', 'g', 'A', 'U', 'G', 'Q', 'Z', 'm']);
+// Decoders the current firmware cycles with m (main/receiver.h order).
+export const DECODERS = ['U80P64-R1', 'U85Q', 'U50P64-R1', 'D32-R2'];
 
 const FIELDS = /(?:^|\s)(\w+)=([^\s]+)/g;
 const fields = (line, target = {}) => {
@@ -29,6 +31,8 @@ export class ReceiverConsole {
     this.directMenu = false;
     this.gainControl = false;
     this.dacTest = false;
+    this.decoderControl = false;
+    this.filterControl = false;
     this.control = {};
     this.demod = null;
     this.dac = {};
@@ -72,7 +76,7 @@ export class ReceiverConsole {
         this.demod = null;
         this.output = {};
         this.gain = {};
-        this.directMenu = this.gainControl = this.dacTest = false;
+        this.directMenu = this.gainControl = this.dacTest = this.decoderControl = this.filterControl = false;
         this.dac = {};
         this.scan = { active: false, candidates: 0, result: '', channel: '' };
         this.refused = '';
@@ -82,16 +86,27 @@ export class ReceiverConsole {
       }
     }
     if (line.startsWith('C5VRX-5 keys:')) this.current = true;
-    if (/^\s+v video standard AUTO\/NTSC\/PAL, e close menu/.test(line)) this.directMenu = true;
+    // The direct-control line moved over firmware versions: v and e shared a
+    // line first, now e has its own line after v/f.
+    if (/^\s+v video standard AUTO\/NTSC\/PAL, e close menu/.test(line) || /^\s+e close menu \(web menu/.test(line)) this.directMenu = true;
     if (!this.current) return;
     if (/^\s+G RX gain /.test(line)) this.gainControl = true;
     if (/^\s+Z DAC self-test /.test(line)) this.dacTest = true;
+    if (/^\s+m decoder /.test(line)) this.decoderControl = true;
+    if (/^\s+v video standard [^,]+, f analog filter /.test(line)) this.filterControl = true;
 
     if (line.startsWith('C5VRX5 version=')) {
       const identity = fields(line);
       if (identity.demod) this.control.demod = identity.demod;
     }
-    if (line.startsWith('DEMOD ')) {
+    let switched;
+    if ((switched = line.match(/^DEMOD (?:switch to=\S+ result=ok active=|fallback to=)(\S+)/))) {
+      this.control.demod = switched[1];
+      if (this.demod) this.demod = { ...this.demod, selected: switched[1], verified: switched[1] };
+      events.add('changed');
+    } else if (line.startsWith('DEMOD switch ')) {
+      events.add('changed');
+    } else if (line.startsWith('DEMOD ')) {
       const identity = fields(line);
       this.demod = identity;
       if (identity.selected) this.control.demod = identity.selected;
@@ -126,6 +141,14 @@ export class ReceiverConsole {
       this.profile.live = fields(line).mode === 'live_switch';
     } else if (line.startsWith('PROFILE active=')) {
       this.profile.active = fields(line).active;
+    } else if (line.startsWith('PROFILE select=')) {
+      const select = line.match(/^PROFILE select=(.+?) active=(.+?) pending=/);
+      if (select) {
+        this.profile.select = select[1];
+        this.profile.active = select[2];
+        delete this.control.mode;
+      }
+      events.add('changed');
     } else if (line.startsWith('HB ')) {
       const hb = fields(line);
       const wasStartup = this.heartbeat.startup === '1';
@@ -221,6 +244,7 @@ export class ReceiverConsole {
       demod: this.demod ? (this.demod.verified && this.demod.verified !== 'unknown'
         ? this.demod.verified : `${this.demod.selected || c.demod || 'UNKNOWN'} (unverified)`) : c.demod || '',
       profile: c.mode || this.profile.active || '',
+      filter: this.profile.select || '',
       liveProfile: this.profile.live,
       dacStep: this.dac.step || '',
       dacExpect: this.dac.expect_mv === undefined ? null : Number.parseInt(this.dac.expect_mv, 10),
@@ -236,7 +260,9 @@ export class ReceiverConsole {
     if (key === 'C' || key === 'B') return this.current && this.calibrationDump;
     if (key === 'G') return this.current && this.gainControl;
     if (key === 'Z') return this.current && this.dacTest;
-    if (['m', 'K', 'k', 'j', 'P', 'O', 'H', 'U'].includes(key)) return false;
-    return ['T', 'h', '?'].includes(key) || (this.current && (!['v', 'e', 'f'].includes(key) || this.directMenu));
+    if (key === 'm') return this.current && this.decoderControl;
+    if (key === 'f') return this.current && this.filterControl;
+    if (['K', 'k', 'j', 'P', 'O', 'H', 'U'].includes(key)) return false;
+    return ['T', 'h', '?'].includes(key) || (this.current && (!['v', 'e'].includes(key) || this.directMenu));
   }
 }

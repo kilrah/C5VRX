@@ -30,8 +30,13 @@
 #ifndef AGC_BIN_DB
 #define AGC_BIN_DB 2              /* bins of the input level, dB */
 #endif
-#define AGC_BINS (100 / AGC_BIN_DB)
 #define AGC_LMIN_DB (-20)         /* bin 0: carrier power at the top row, dB cells^2 */
+/* The top bin must reach a carrier on its best radius at the lowest row
+ * (G2 sits ~74 dB under the top row: ~89 dB). Up to 2026-11-13 it ended at
+ * +80 (about G9): a stronger carrier, an external LNA close in, read as +79
+ * and LEVEL held a row that folded every window (test_agc_strong.c). */
+#define AGC_LMAX_DB 100
+#define AGC_BINS ((AGC_LMAX_DB - AGC_LMIN_DB) / AGC_BIN_DB)
 #define AGC_MAX_HOMES 30u
 
 typedef struct {
@@ -42,6 +47,7 @@ typedef struct {
     int8_t target_db;
     uint8_t release;
     uint8_t max_index, homes;
+    uint8_t top_index;                /* highest home: the noise-limited top row (agc.c LEVEL_TOP_NOISE_MAX_X16) */
     uint8_t home[AGC_MAX_HOMES];
     int16_t rel_q8[DG_STATES];        /* row gain minus the top row, dB Q8 (model + learned) */
     int16_t learned_q8[DG_STATES];    /* learned correction of the model per row */
@@ -78,8 +84,21 @@ typedef struct {
     uint32_t folds, moves;
 } agc_rssi_t;
 
+/* The noise-limited top row: the highest row whose receiver noise is at most
+ * this (cells^2 x16, 3 cells rms). Bare boards keep G83 (4.8-7 cells^2);
+ * behind an external LNA higher rows add no C/N, only folds (agc.c,
+ * receiver_gain_top). */
+#ifndef LEVEL_TOP_NOISE_MAX_X16
+#define LEVEL_TOP_NOISE_MAX_X16 (9u * 16u)
+#endif
+/* The limit in use (EXPERIMENTAL > LEVEL TOP sets it before a re-bind;
+ * LEVEL_TOP_NOISE_MAX_X16 by default). */
+void agc_level_set_top_noise(uint16_t noise_max_x16);
+uint16_t agc_level_top_noise(void);
 /* row_db_q8: the gain model per row (direct_gain_t model_db_q8), noise_top_x16:
- * receiver noise power at the table maximum, cells^2 x16. */
+ * receiver noise power at the table maximum, cells^2 x16 (behind an external
+ * LNA it can lie far over the 4-bit window: the homes then end at the highest
+ * row whose noise alone does not fold, a->top_index). */
 void agc_level_options(agc_level_t *a, bool radius, uint32_t memory_us, int target_db, unsigned release);
 void agc_level_reset(agc_level_t *a, const int16_t row_db_q8[DG_STATES], uint8_t max_index, uint16_t noise_top_x16);
 uint8_t agc_level_tick(agc_level_t *a, const dg_observation_t *o, uint8_t current, uint64_t now_us);

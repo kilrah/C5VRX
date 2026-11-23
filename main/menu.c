@@ -78,11 +78,11 @@ void menu_dac_step(void)
         if (s_dac_step == DAC_STEP_BIT0) {
             printf("DACTEST meter steps: unplug the display, measure CVBS to GND; expected mV at 3.30 V:");
             for (unsigned k = 0; k < DAC_CHECK_BITS; ++k)
-                printf(" %s=%d", dac_check_pins[k], dac_check_expected_mv((uint8_t)(1u << k), DAC_CHECK_VDD_MV));
+                printf(" %s=%d", (k == 2 && experimental_clock_d10()) ? "D3" : dac_check_pins[k], dac_check_expected_mv((uint8_t)(1u << k), DAC_CHECK_VDD_MV));
             printf(" ALL=%d NONE=0 (scale by your 3V3 pin / 3.30)\n", dac_check_expected_mv(63, DAC_CHECK_VDD_MV));
         }
         printf("DACTEST step=%s code=%u expect_mv=%d (record it for tools/dac_check.py)\n",
-               dac_check_step_name(s_dac_step), code, dac_check_expected_mv(code, DAC_CHECK_VDD_MV));
+               (s_dac_step == DAC_STEP_BIT0 + 2 && experimental_clock_d10()) ? "D3" : dac_check_step_name(s_dac_step), code, dac_check_expected_mv(code, DAC_CHECK_VDD_MV));
     }
     if (s_menu_active) menu_render();
 }
@@ -184,6 +184,7 @@ void menu_render(void)
     static const char *const s_class[PROFILES] = {"NORMAL", "NARROW", "NARROW", "WIDE", "XNARROW"};
     const int dev = profile_live_deviation_x100();   /* what AUTO would pick from the measured VTX */
     menu_view_t v = {
+        .clock_d10 = experimental_clock_d10(),
         .exp_open = s_exp_sub >= 0, .exp_cursor = s_exp_sub < 0 ? 0 : (unsigned)s_exp_sub,
         .exp_active = experimental_mask() != 0, .exp_failed = s_exp_failed || experimental_phy_failed(),
         .exp_reboot = experimental_reboot_needed(), .exp_coarse = rf_lane() != RF_LANE_ULTRAFINE,
@@ -202,7 +203,7 @@ void menu_render(void)
         .detected_valid = s_detected_std_valid, .detected_pal = s_detected_std == VIDEO_STD_PAL,
         .output = transport_output(), .output_name = transport_output_name(),
         .gain_mode = receiver_gain_mode_name(mode, gain_mode, sizeof(gain_mode)), .gain_auto = receiver_gain_mode_auto(mode),
-        .demod = transport_demod() == TRANSPORT_DEMOD_U85Q ? "U85Q" : transport_demod() == TRANSPORT_DEMOD_P64 ? "P64" : "P4",
+        .demod = transport_demod_short(transport_demod()),
         .gain = s_current_gain, .gain_max = rf_gain_table()->max_index,
         .filter_mode = selected == PROFILE_SELECT_AUTO ? "AUTO" : s_class[selected],
         .filter_active = active >= 0 && active < PROFILES ? s_class[active] : "?",
@@ -247,7 +248,7 @@ static void free_nodes(void)
     s_chunk_count = s_node_capacity = s_node_count = 0;
 }
 
-/* Count the raster, reserve exactly that (grow only), link a cycle.
+/* Count the raster, reserve exactly that, link a cycle.
  * Interlaced first; the progressive field only when its chain cannot be
  * reserved (half the descriptors, but not every display keeps it). */
 static esp_err_t reserve_chain(video_standard_t standard, bool interlaced, unsigned *required)
@@ -258,6 +259,13 @@ static esp_err_t reserve_chain(video_standard_t standard, bool interlaced, unsig
     if (!menu_raster_emit(&s_raster, standard, interlaced, count_segment, required) || !*required)
         return ESP_ERR_INVALID_SIZE;
     unsigned chunks = (*required + NODE_CHUNK - 1u) / NODE_CHUNK;
+    /* A failed interlaced attempt can leave more chunks than progressive
+     * needs. TX is stopped (or this is initial entry): release the excess. */
+    while (s_chunk_count > chunks) {
+        heap_caps_free(s_chunks[--s_chunk_count]);
+        s_chunks[s_chunk_count] = NULL;
+        s_node_capacity -= NODE_CHUNK;
+    }
     while (s_chunk_count < chunks) {
         dma_descriptor_t *c = heap_caps_aligned_alloc(4u, NODE_CHUNK * sizeof(dma_descriptor_t),
                                                       MALLOC_CAP_DMA_DESC_AHB | MALLOC_CAP_INTERNAL);
@@ -313,6 +321,9 @@ static void entry_start(void)
     transport_stop_tx();
     vTaskDelay(pdMS_TO_TICKS(MENU_RELOCK_GAP_MS));
     transport_start_chain(node(0));
+    /* Hardware experiment: the menu on the IQ pads while nothing measures
+     * IQ; the boot splash keeps IQ (the receiver runs under it). */
+    rf_hwx_pads_tx(s_splash < 0 && !receiver_paused());
 }
 
 bool menu_open(void)
@@ -337,6 +348,7 @@ bool menu_open(void)
 void menu_close(void)
 {
     if (!s_menu_active) return;
+    rf_hwx_pads_tx(false);
     transport_stop_chain();
     vTaskDelay(pdMS_TO_TICKS(MENU_RELOCK_GAP_MS));
     transport_resume_live();

@@ -139,6 +139,13 @@ int main(int argc, char **argv)
         v.exp_reboot = i == 0; v.exp_coarse = i == 1; v.exp_failed = i == 2;
         menu_ui_render(ui, &v); check("exp_status", false);
     }
+    for (unsigned on = 0; on < 2; ++on) {
+        v = base(); v.exp_open = true; v.exp_cursor = EXP_CLOCK_D10;
+        v.exp_values[EXP_CLOCK_D10] = on; v.clock_d10 = !on; v.exp_reboot = true;
+        menu_ui_render(ui, &v); check("clock_reboot", false);
+        v.exp_cursor = EXP_DAC;
+        menu_ui_render(ui, &v); check("clock_dac", true);
+    }
     const menu_status_view_t exp_status = {.title="CALIBRATING", .line1="VTX OFF", .line2="",
                                             .percent=30, .channel="R1", .freq_mhz=5865, .exp_active=true};
     menu_ui_render_status(ui, &exp_status); check("status_exp", false);

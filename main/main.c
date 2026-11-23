@@ -55,6 +55,11 @@ void app_main(void)
         printf("CONTROL stack reservation failed; USB status/download remain available\n");
         return;
     }
+    if (!receiver_prepare()) {
+        s_boot_stage = "receiver_memory";
+        printf("RECEIVER memory reservation failed; USB status/download remain available\n");
+        return;
+    }
     s_boot_stage = "rf";
     ESP_ERROR_CHECK(rf_start());
     s_boot_radio_ms = (esp_timer_get_time() - app_t0) / 1000;
@@ -83,8 +88,8 @@ void app_main(void)
             printf("PREFS restored filter_select=%d gain_mode=%u dfilt=%d\n", p.filter_select, receiver_gain_mode(),
                    phy_dfilt_mode());
         }
-        uint8_t demod;   /* the decoder of the last session (console m, NVS "demod"); set before the first start */
-        if (blob_load(DEMOD_NVS_KEY, &demod, sizeof(demod)) && demod < TRANSPORT_DEMODS && transport_set_demod(demod))
+        uint8_t demod;   /* the decoder of the last session (console m, NVS TRANSPORT_DEMOD_KEY); set before the first start */
+        if (blob_load(TRANSPORT_DEMOD_KEY, &demod, sizeof(demod)) && demod < TRANSPORT_DEMODS && transport_set_demod(demod))
             printf("PREFS restored demod=%s\n", transport_demod_name(demod));
     }
     s_boot_stage = "transport";
@@ -101,7 +106,13 @@ void app_main(void)
     const int64_t ready_deadline = app_t0 + 9000000;
     const bool splash = esp_timer_get_time() < ready_deadline && menu_splash_begin();
     s_boot_stage = "tasks";
-    receiver_start();
+    if (!receiver_start()) {
+        menu_splash_end();
+        transport_stop_tx();
+        s_boot_stage = "receiver_fault";
+        printf("RECEIVER start failed: live OFF; USB status/download remain available\n");
+        return;
+    }
     control_start();
     if (splash) splash_wait_gain(splash_t0, splash_holds, ready_deadline);
     menu_splash_end();

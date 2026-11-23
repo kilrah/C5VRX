@@ -125,7 +125,7 @@ static void snapshot(diag_record_t *r, uint8_t gain, uint32_t faults)
     bool tuple_ok = arc_gain_tuple_decode(table, gain, &tuple);
     const rf_filter_t f = rf_filter();
     r->gain = gain;
-    r->gain_max = table->max_index;
+    r->gain_max = receiver_gain_top();   /* the useful top: the table maximum, or under an LNA's noise */
     r->rf_stage = tuple_ok ? tuple.rf_stage : 0xff;
     r->rf_code = tuple.rf_code;
     r->bb_code = tuple.bb_code;
@@ -399,6 +399,7 @@ void diag_report(void)
     arc_gain_tuple_t t = {0};
     const bool tuple_ok = arc_gain_tuple_decode(table, g, &t);
     const uint8_t top = arc_gain_highest_rf_stage_start(table);
+    const uint8_t gtop = receiver_gain_top();
 
     firmware_print();
     printf("RANGE_DIAG channel=%s freq=%u in_spec=%u%s\n", rf_channel()->name, mhz, rf_freq_in_spec(mhz),
@@ -414,8 +415,8 @@ void diag_report(void)
            (unsigned long)s_rx.seconds[RX_ACQUIRE]);
     printf("RANGE_DIAG afc locked=%u offset_khz=%d cfo_khz=%d\n", s_afc_locked, rf_offset_khz(), s_cfo_khz);
     printf("RANGE_DIAG gain index=%u max=%u rf_stage=%u rf_code=%u bb=%u fine=%u top_rf_stage_from=%u at_max=%u "
-           "state=%u\n", g, table->max_index, tuple_ok ? t.rf_stage : 0xffu, tuple_ok ? t.rf_code : 0u,
-           tuple_ok ? t.bb_code : 0u, tuple_ok ? t.fine_code : 0u, top, g >= table->max_index, (unsigned)s_gain.state);
+           "state=%u useful_top=%u\n", g, table->max_index, tuple_ok ? t.rf_stage : 0xffu, tuple_ok ? t.rf_code : 0u,
+           tuple_ok ? t.bb_code : 0u, tuple_ok ? t.fine_code : 0u, top, g >= gtop, (unsigned)s_gain.state, gtop);
     printf("RANGE_DIAG chain sphase=%s dc_ok=%u dc_held=%u lane=%s faults=%lu\n", calibration_sphase_state(),
            calibration_dc_ok(g), phy_dco_held(), rf_lane_name(rf_lane()), (unsigned long)transport_fault_count());
     const int cls_mhz = calibration_filter_class_mhz(), cn = receiver_obs_cn_x10();
@@ -440,14 +441,16 @@ void diag_report(void)
     VERDICT(!receiver_gain_mode_auto(receiver_gain_mode()),
             "GAIN_FIXED a fixed gain is saved across boots and costs range (menu GAIN or console G to AUTO)");
     VERDICT(!rf_freq_in_spec(mhz), "UNKNOWN out-of-spec channel: compare with a channel <= 5885 MHz");
-    VERDICT(g >= table->max_index && cn != CN_UNKNOWN_X10 && cn <= DIAG_FLOOR_CN_X10,
-            "POSSIBLE_RF_FLOOR table maximum and C/N estimate <= 2 dB (no carrier, or at the receiver noise)");
+    /* "Maximum" is the useful top (receiver_gain_top): the table maximum, or
+     * behind an external LNA the highest row whose noise does not fold. */
+    VERDICT(g >= gtop && cn != CN_UNKNOWN_X10 && cn <= DIAG_FLOOR_CN_X10,
+            "POSSIBLE_RF_FLOOR top gain and C/N estimate <= 2 dB (no carrier, or at the receiver noise)");
     VERDICT(cn == CN_UNKNOWN_X10, "UNKNOWN C/N model has no carrier evidence; not measured RF sensitivity");
-    VERDICT(g >= table->max_index && cn > DIAG_FLOOR_CN_X10 && cn < DIAG_WEAK_CN_X10,
-            "WEAK_CARRIER table maximum, C/N estimate 2-8 dB: near the usable-picture threshold");
+    VERDICT(g >= gtop && cn > DIAG_FLOOR_CN_X10 && cn < DIAG_WEAK_CN_X10,
+            "WEAK_CARRIER top gain, C/N estimate 2-8 dB: near the usable-picture threshold");
     VERDICT(g >= table->max_index && s_obs_p50 <= 4 && s_obs_origin_pm >= 650,
             "QUANTISER_LIMITED noise below one ultrafine step at the table maximum: check with the VTX off");
-    VERDICT(video_recent && g + DIAG_FADE_HEADROOM <= table->max_index && cn >= DIAG_WEAK_CN_X10,
+    VERDICT(video_recent && g + DIAG_FADE_HEADROOM <= gtop && cn >= DIAG_WEAK_CN_X10,
             "VIDEO_EVIDENCE strong C/N estimate with gain headroom");
     if (!any) printf("RANGE_DIAG verdict=UNKNOWN no specific evidence\n");
 #undef VERDICT

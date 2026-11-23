@@ -303,3 +303,106 @@ static inline void dc_servo_forget_all(dc_servo_t *s)
             s->row[r].fold_walk[k] = s->row[r].fold_window[k] = s->row[r].fold_bad[k] = s->row[r].last_folded[k] = 0;
     }
 }
+
+/* ---- shared DC model (2026-11-14) ----
+ * The live trim of gain row g (DAC codes over its table codes) is
+ *     offset(g) = shared + local(g).
+ * A DC shift after a channel setup, a temperature drift, another antenna or
+ * an external LNA is common to the rows (board 2026-10-19: G71 trimmed
+ * +8/+13 to 0.3 cells while G77 sat at 3.9/3.5); a template or base-map row
+ * (another channel or board) is off by its own amount, smoothly over the
+ * rows. The per-row servo learned both per row. At the range edge Direct Gain
+ * crosses 10-15 rows a second (blackbox 2026-11-14, session 378, ~22 dB LNA:
+ * G50-G65, DC 2.2-2.8 cells on template rows, dropouts at 4-7 dB C/N), so no
+ * row collected its mean in time; and the first adoption pinned every row,
+ * after which nothing was shared at all.
+ *
+ * Attribution of a servo step on row g:
+ *  - the row's codes are its own (calibrated, or adopted) or the row has
+ *    settled (DC_MODEL_SETTLED decisions in the deadband): the error is
+ *    drift: the step goes to `shared`, every row follows at once;
+ *  - otherwise (a template row still off): `local(g)`.
+ * A row whose shared steps do not bring it into the deadband
+ * (DC_MODEL_STRIKES shared steps without settling) has an error of its own:
+ * its steps turn local, so a lasting per-row mismatch (a calibration from
+ * another day, a template row) cannot keep moving every other row and two
+ * rows cannot fight over `shared`. A template row without its own local part inherits the nearest
+ * row's (`inherit` = local plus what an adoption moved into its codes); a
+ * calibrated row's codes are right, its local part is 0. */
+#ifndef DC_MODEL_ROWS
+#define DC_MODEL_ROWS 96u   /* indexed by gain row (>= ARC_VENDOR_GAIN_MAX + 1) */
+#endif
+#define DC_MODEL_SETTLED 3u
+#define DC_MODEL_STRIKES 3u
+typedef struct {
+    int shared[2];
+    int16_t local[DC_MODEL_ROWS][2];
+    int16_t absorbed[DC_MODEL_ROWS][2];   /* codes an adoption moved into the table */
+    bool own[DC_MODEL_ROWS];          /* the row has its own local part */
+    uint8_t settled[DC_MODEL_ROWS];   /* in-deadband decisions in a row */
+    uint8_t strikes[DC_MODEL_ROWS];   /* shared steps since the row last settled */
+    uint32_t shared_steps, local_steps;
+} dc_model_t;
+
+static inline void dc_model_reset(dc_model_t *m) { *m = (dc_model_t){0}; }
+
+static inline int dc_model_local(const dc_model_t *m, unsigned g, unsigned a, bool templ)
+{
+    if (g >= DC_MODEL_ROWS || a > 1u) return 0;
+    if (m->own[g]) return m->local[g][a];
+    if (!templ) return 0;
+    for (unsigned d = 1; d < DC_MODEL_ROWS; ++d) {
+        if (g >= d && m->own[g - d]) return m->local[g - d][a] + m->absorbed[g - d][a];
+        if (g + d < DC_MODEL_ROWS && m->own[g + d]) return m->local[g + d][a] + m->absorbed[g + d][a];
+    }
+    return 0;
+}
+
+static inline int dc_model_offset(const dc_model_t *m, unsigned g, unsigned a, bool templ)
+{
+    return m->shared[a > 1u ? 1u : a] + dc_model_local(m, g, a, templ);
+}
+
+/* A decision's mean for row g (before its step): counts the settle run. */
+static inline void dc_model_note(dc_model_t *m, unsigned g, const int dc[2], bool folded)
+{
+    if (g >= DC_MODEL_ROWS) return;
+    const bool in = !folded && dc_servo_abs(dc[0]) <= DC_SERVO_DEADBAND && dc_servo_abs(dc[1]) <= DC_SERVO_DEADBAND;
+    if (in) { if (m->settled[g] < 255u) ++m->settled[g]; m->strikes[g] = 0; }
+}
+
+/* Whether a step on row g is drift (shared) or the row's own (local). */
+static inline bool dc_model_shared_step(const dc_model_t *m, unsigned g, bool templ)
+{
+    return g < DC_MODEL_ROWS && m->strikes[g] < DC_MODEL_STRIKES && (!templ || m->settled[g] >= DC_MODEL_SETTLED);
+}
+
+/* The servo applied `applied` codes on row g. Returns whether it was shared. */
+static inline bool dc_model_apply(dc_model_t *m, unsigned g, const int applied[2], bool templ)
+{
+    if (g >= DC_MODEL_ROWS || (!applied[0] && !applied[1])) return false;
+    if (dc_model_shared_step(m, g, templ)) {
+        m->shared[0] += applied[0]; m->shared[1] += applied[1];
+        if (m->strikes[g] < 255u) ++m->strikes[g];
+        ++m->shared_steps;
+        return true;
+    }
+    for (unsigned a = 0; a < 2; ++a) m->local[g][a] = (int16_t)(dc_model_local(m, g, a, templ) + applied[a]);
+    m->own[g] = true;
+    m->settled[g] = 0;
+    ++m->local_steps;
+    return false;
+}
+
+/* Row g's trimmed codes went into its table codes (adopted): its offset must
+ * not move, and its neighbours keep inheriting the same correction. */
+static inline void dc_model_adopt(dc_model_t *m, unsigned g, bool templ)
+{
+    if (g >= DC_MODEL_ROWS) return;
+    for (unsigned a = 0; a < 2; ++a) {
+        const int local = dc_model_local(m, g, a, templ);
+        m->absorbed[g][a] = (int16_t)(m->absorbed[g][a] + m->shared[a] + local);
+        m->local[g][a] = (int16_t)-m->shared[a];
+    }
+    m->own[g] = true;
+}

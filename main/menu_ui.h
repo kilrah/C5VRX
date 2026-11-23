@@ -35,6 +35,7 @@ enum {
 
 typedef struct {
     bool exp_open, exp_active, exp_failed, exp_reboot, exp_coarse;
+    bool clock_d10; /* active boot wiring, independent of requested setting */
     unsigned exp_cursor;
     uint8_t exp_values[EXP_ITEMS];
     int cursor;                     /* MENU_* */

@@ -295,6 +295,93 @@ int main(void)
         printf("     template rows 6-12 cells off, sigma 0.8: within 0.35 cells after <= %u decisions\n", worst_periods);
         check("template rows 6-12 cells off: corrected within 8 decisions", worst_periods <= 8u);
     }
+    /* ---- shared DC model (dc_model_t) ----
+     * Rows 50..83; the true error of row g in codes is drift + own(g). An
+     * ideal servo visit measures dc = 200 mcells/code * (true - offset) and
+     * steps by the rounded remainder (at most 16 codes, the bracket limit). */
+    {
+        enum { LO = 50, HI = 83 };
+        static dc_model_t m;
+        static bool templ[DC_MODEL_ROWS];
+        static int own_err[DC_MODEL_ROWS];
+        int drift = 0;
+        const int slope = 200;
+        #define ERR(g, a) (drift + own_err[g] + (int)(a) * 3)
+        #define VISIT(g) do { \
+            int dc_[2], st_[2]; \
+            for (unsigned a_ = 0; a_ < 2; ++a_) dc_[a_] = slope * (ERR(g, a_) - dc_model_offset(&m, (g), a_, templ[g])); \
+            dc_model_note(&m, (g), dc_, false); \
+            for (unsigned a_ = 0; a_ < 2; ++a_) { \
+                st_[a_] = abs(dc_[a_]) <= DC_SERVO_DEADBAND ? 0 : dc_[a_] / slope; \
+                if (st_[a_] > 16) st_[a_] = 16; \
+                if (st_[a_] < -16) st_[a_] = -16; } \
+            dc_model_apply(&m, (g), st_, templ[g]); } while (0)
+        #define WORST(out) do { out = 0; for (unsigned g_ = LO; g_ <= HI; ++g_) for (unsigned a_ = 0; a_ < 2; ++a_) { \
+            const int e_ = abs(ERR(g_, a_) - dc_model_offset(&m, g_, a_, templ[g_])); if (e_ > out) out = e_; } } while (0)
+        int worst;
+        srand(14);
+
+        /* 1. Calibrated rows (bare board), a common shift of 20 codes after a
+         * channel setup: the first visit of any row fixes every row. */
+        dc_model_reset(&m);
+        for (unsigned g = 0; g < DC_MODEL_ROWS; ++g) { templ[g] = false; own_err[g] = 0; }
+        drift = 20;
+        VISIT(83); VISIT(83);
+        WORST(worst);
+        check("model: a common shift on calibrated rows: two visits of one row fix all rows", worst <= 1);
+        const int shared_after = m.shared[0];
+
+        /* 2. Template rows 50..67 (the LNA edge), each off by a smooth amount
+         * of its own (30..47 codes) plus the drift: hopping visits. */
+        for (unsigned g = LO; g <= 67; ++g) { templ[g] = true; own_err[g] = 30 + (int)(g - LO); }
+        unsigned visits = 0;
+        for (; visits < 400; ++visits) {
+            { const unsigned row_ = (unsigned)(LO + rand() % 18); VISIT(row_); }
+            WORST(worst);
+            if (worst <= 1) break;
+        }
+        printf("     template rows 50-67 (30-47 codes off): every row within a code after %u hopping visits\n", visits + 1);
+        check("model: template rows converge by inheritance, under 6 visits per row", worst <= 1 && visits + 1 <= 6u * 18u);
+        unsigned settle = 0;
+        for (unsigned k = 0; k < 200; ++k) { const unsigned row_ = (unsigned)(LO + rand() % 34); VISIT(row_); }
+        /* A later drift of 10 codes (temperature, another antenna): rows
+         * now settled move together. */
+        drift += 10;
+        for (; settle < 60; ++settle) {
+            { const unsigned row_ = (unsigned)(LO + rand() % 34); VISIT(row_); }
+            WORST(worst);
+            if (worst <= 1) break;
+        }
+        printf("     drift of 10 codes after settling: every row within a code after %u visits\n", settle + 1);
+        check("model: a drift after settling reaches every row within 6 visits", worst <= 1 && settle + 1 <= 6u);
+        check("model: the first shift went to the shared part", shared_after == 20);
+
+        /* 3. One calibrated row off by 15 of its own: its steps turn local,
+         * the others end where they belong. */
+        dc_model_reset(&m);
+        for (unsigned g = 0; g < DC_MODEL_ROWS; ++g) { templ[g] = false; own_err[g] = 0; }
+        drift = 0;
+        own_err[70] = 15;
+        for (unsigned k = 0; k < 300; ++k) { const unsigned row_ = (unsigned)(LO + rand() % 34); VISIT(row_); }
+        WORST(worst);
+        printf("     one calibrated row 15 codes off: worst row %d codes, row 70 own=%u local=%d\n", worst, m.own[70], m.local[70][0]);
+        check("model: a lasting per-row error turns local, no row left off", worst <= 1 && m.own[70]);
+
+        /* 4. Adoption keeps the offset and what the neighbours inherit. */
+        dc_model_reset(&m);
+        for (unsigned g = 0; g < DC_MODEL_ROWS; ++g) { templ[g] = true; own_err[g] = 0; }
+        m.shared[0] = 7; m.local[60][0] = 12; m.own[60] = true;
+        const int before60 = dc_model_offset(&m, 60, 0, true), before61 = dc_model_offset(&m, 61, 0, true);
+        dc_model_adopt(&m, 60, true);
+        /* the caller moved 19 codes into row 60's table codes */
+        check("model: adoption moves the offset into the codes (row offset 0)", dc_model_offset(&m, 60, 0, true) == 0 && before60 == 19);
+        check("model: a template neighbour inherits the same after adoption", dc_model_offset(&m, 61, 0, true) == before61);
+        m.shared[0] += 5;
+        check("model: an adopted row still follows a later shared drift", dc_model_offset(&m, 60, 0, true) == 5);
+        #undef ERR
+        #undef VISIT
+        #undef WORST
+    }
     printf("%u/%u dc servo checks passed\n", s_run - s_fail, s_run);
     return s_fail != 0;
 }

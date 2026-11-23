@@ -399,7 +399,7 @@ static void card_scan(const menu_view_t *v)
 /* DAC TEST: a ramp over every level from blanking to the top code, then one
  * bar per bit whose halves differ in that bit alone. Measurement codes,
  * not the UI palette. */
-static void card_dac(void)
+static void card_dac(const menu_view_t *v)
 {
     const unsigned x0 = sample(CARD_X), x1 = sample(CARD_R);
     for (unsigned y = 11; y < 21; ++y) {
@@ -412,7 +412,7 @@ static void card_dac(void)
         const int x = CARD_X + (int)k * pitch;
         rect(x, 24, half, 9, dac_check_bar_base(k));
         rect(x + half, 24, half, 9, dac_check_bar_top(k));
-        text_box(dac_check_pins[k] + 1, x, 36, 2 * half, ALIGN_CENTER, FONT_TEXT, MENU_INK_GREY);   /* "4" of D4 */
+        text_box(k == 2 && v->clock_d10 ? "3" : dac_check_pins[k] + 1, x, 36, 2 * half, ALIGN_CENTER, FONT_TEXT, MENU_INK_GREY);   /* "4" of D4 */
     }
 }
 
@@ -463,14 +463,20 @@ static void draw_menu(const void *view)
         text_box("NOT APPLIED", CARD_X, 16, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_WHITE);
         text_box("RETRY HOLD", CARD_X, 28, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_GREY);
     }
+    else if (v->exp_open && v->exp_cursor == EXP_CLOCK_D10) {
+        text_box(v->exp_reboot ? "REBOOT" : "BOOT SETTING", CARD_X, 14, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_WHITE);
+        if (v->exp_reboot) text_box("NEEDED", CARD_X, 22, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_WHITE);
+        text_box(v->exp_values[EXP_CLOCK_D10] ? "BIT2 ON D3" : "BIT2 ON D6",
+                 CARD_X, 33, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_GREY);
+    }
     else if (v->exp_open && v->exp_cursor == EXP_IQ_LANE) {
         text_box(v->exp_reboot ? "REBOOT" : "BOOT SETTING", CARD_X, 14, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_WHITE);
         if (v->exp_reboot) text_box("NEEDED", CARD_X, 22, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_WHITE);
         text_box(v->exp_coarse ? "DC/PHASE OFF" : "DC/PHASE ON", CARD_X, 33, CARD_W, ALIGN_LEFT, FONT_TEXT, MENU_INK_GREY);
     }
-    else if (v->exp_open && v->exp_cursor == EXP_DAC) card_dac();
+    else if (v->exp_open && v->exp_cursor == EXP_DAC) card_dac(v);
     else if (v->cal_sub >= 0) card_cal(v);
-    else if (v->cursor == MENU_DAC) card_dac();
+    else if (v->cursor == MENU_DAC) card_dac(v);
     else if (v->scan_active) card_scan(v);
     else if (v->cursor == MENU_FILTER) card_filter(v);
     else if (v->cursor == MENU_EXIT) card_info(v);

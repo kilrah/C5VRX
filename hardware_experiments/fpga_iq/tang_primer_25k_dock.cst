@@ -1,0 +1,22 @@
+// C5VRX by Twotoz and the C5VRX contributors: hardware experiment FPGA_IQ.
+// Gowin physical constraints, Tang Primer 25K Dock, PMOD J4 (operator table
+// 2026-11-16). iq[3:0] = Q {sign, ADC6, ADC5, ADC4}, iq[7:4] = I, as in hwx.h.
+// Find J4 pin 1 (+3V3) with a meter before wiring; do not connect +3V3.
+IO_LOC "iq[0]" C11;
+IO_PORT "iq[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[1]" C10;
+IO_PORT "iq[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[2]" B11;
+IO_PORT "iq[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[3]" B10;
+IO_PORT "iq[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[4]" D11;
+IO_PORT "iq[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[5]" D10;
+IO_PORT "iq[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[6]" G11;
+IO_PORT "iq[6]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "iq[7]" G10;
+IO_PORT "iq[7]" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+// XIAO GND to J4 pin 3/4. No clock pin: MODEM_DIAG updates at 40 MS/s and
+// the FPGA samples on its own clock. XIAO MTMS (GPIO2) is not connected.

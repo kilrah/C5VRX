@@ -63,20 +63,36 @@ void transport_resume_live(void);
 void transport_start_chain(dma_descriptor_t *first);
 uint32_t transport_switch_wait_ms(void);
 const char *transport_program_name(void);
-/* Decoder (transport.c): U80P64-R1 (default) or U85Q, each a fixed program
- * with its own LUT; kept in NVS "demod" (main.c, console m). */
+/* Decoder (transport.c): D32-R2 (default), U50P64-R1, U80P64-R1 or U85Q, each a
+ * fixed program with its own LUT; kept in NVS TRANSPORT_DEMOD_KEY (main.c,
+ * console m). Operator decision 2026-11-15: D32-R2 is the default (the
+ * fewest colour dots, confirmed on the goggle). U50P64-R1 stays selectable
+ * and keeps its deviation fallback to U80P64-R1 (control.c
+ * demod_deviation_guard). The key was "demod" (U80P64-R1 default) and
+ * "demod2" (U50P64-R1 default); a choice stored under an old key is not read,
+ * so every board starts once on the new default. */
+/* Appended, never reordered: the NVS key and the flight log keep these values. */
+/* D32-R2 (2026-11-15, research/nl_tracker.py): the U85Q program, a 32-sector
+ * phase difference with click suppression: the fewest colour dots (board
+ * capture, 1.80 against 3.06 IRE for U50P64-R1), line lock close to
+ * U50P64-R1 at the edge for deviation ~0.7 (host model), its luma 3-4 dB
+ * noisier at 2-9 dB C/N. */
 #ifdef C5VRX_P4LINK
-/* P4-link build (docs/P4LINK.md): RAW (the default) sends the raw ring,
- * Q4/I4 at 40 MS/s, and the P4 demodulates; P64/U85Q stay for A/B. Its own
- * NVS key, so a saved XIAO-style choice does not override RAW. */
-enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMOD_RAW, TRANSPORT_DEMODS };
-#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_RAW
-#define DEMOD_NVS_KEY "p4demod"
+/* P4-link build (docs/P4LINK.md): RAW also sends the raw ring, Q4/I4 at
+ * 40 MS/s, and the P4 demodulates (its own U80P64-R1 copy). The default is
+ * D32-R2 on the C5 as on the XIAO (operator 2026-11-23: the C5's P64 beat
+ * the P4's RAW on a hot camera's whites). Its own NVS key ("p4demod" held
+ * the old order, where RAW was 2), so a saved choice is not misread. */
+enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMOD_U50P64, TRANSPORT_DEMOD_D32,
+       TRANSPORT_DEMOD_RAW, TRANSPORT_DEMODS };
+#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_D32
+#define TRANSPORT_DEMOD_KEY "p4demod2"
 #else
-enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMODS };
-#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_P64
-#define DEMOD_NVS_KEY "demod"
+enum { TRANSPORT_DEMOD_P64, TRANSPORT_DEMOD_U85Q, TRANSPORT_DEMOD_U50P64, TRANSPORT_DEMOD_D32, TRANSPORT_DEMODS };
+#define TRANSPORT_DEMOD_DEFAULT TRANSPORT_DEMOD_D32
+#define TRANSPORT_DEMOD_KEY "demod3"
 #endif
+const char *transport_demod_short(uint8_t d);   /* menu: "P64", "U85Q", "U50", "D32" (P4 link: "P4") */
 uint8_t transport_demod(void);
 const char *transport_demod_name(uint8_t d);
 bool transport_set_demod(uint8_t d);
@@ -88,6 +104,8 @@ uint32_t transport_restart_errors(void);
 unsigned transport_output(void);
 const char *transport_output_name(void);
 bool transport_set_output(unsigned level);
+unsigned transport_output_word(void);          /* the verified live output: a level or an affine word */
+bool transport_set_output_affine(unsigned word);   /* AUTO OUTPUT (output_auto.h); 0 = manual level */
 void transport_stop_chain(void);
 void transport_poll_faults(void);
 uint32_t transport_fault_count(void);
@@ -116,6 +134,8 @@ bool copy_control_window(uint8_t *dst, size_t bytes);
 bool copy_probe_window(uint8_t dst[PROBE_BYTES], int *node);
 bool copy_sentinel_window(uint8_t dst[64]);
 bool copy_snapshot(uint8_t *dst);
+/* Bench frame sweep: the 8190 bytes ending at the next RX descriptor boundary and its time. */
+bool copy_snapshot_at_boundary(uint8_t *dst, int64_t *boundary_us);
 bool copy_recent_endpoints(uint8_t *dst, size_t n);
 void rx_clock_slip(uint32_t us);
 
@@ -133,12 +153,15 @@ extern dg_map_blob_t s_gain_map_saved;
 extern bool s_gain_map_saved_valid;
 /* Observer-owned context snapshot; refuses unsettled/changed model state. */
 unsigned receiver_export_gain_map(dg_map_blob_t *blob);
-void receiver_start(void);
+bool receiver_prepare(void); /* reserve stacks/TCBs and timer without starting gain */
+bool receiver_start(void);
 bool receiver_active(void);
 bool receiver_paused(void);
 /* Pause gain control for a calibration/scan that owns the gain itself. */
 bool receiver_pause(const char *tag);
 void receiver_resume(void);
+void receiver_pause_print(void);                /* T: PAUSES, who paused the receiver and how long */
+void output_auto_print(void);                   /* T: OUTPUT_AUTO (control.c) */
 void receiver_set_gain(uint8_t gain);
 void receiver_print(void);
 void receiver_print_map(void);   /* console M: GAINMAP line */
@@ -163,6 +186,7 @@ static inline bool receiver_gain_mode_auto(uint8_t mode)
     return mode == GAIN_MODE_AUTO || mode == GAIN_MODE_LEVEL || mode == GAIN_MODE_RSSI;
 }
 uint8_t receiver_gain_mode(void);
+unsigned receiver_strong_lane(void);   /* STRONG LANE steps in use: 0 none, 1 fine, 2 coarse (strong_lane.h) */
 void receiver_set_gain_mode(uint8_t mode, bool save);
 uint8_t receiver_gain_mode_next(uint8_t mode);
 const char *receiver_gain_mode_name(uint8_t mode, char *buf, unsigned size);
@@ -182,7 +206,7 @@ extern volatile video_standard_t s_detected_std;
 extern volatile int64_t s_last_video_us;           /* last burst-confirmed sync */
 extern QueueHandle_t s_commands;
 void control_start(void);
-bool control_prepare(void); /* reserve unchanged control stack before driver heap fragmentation */
+bool control_prepare(void); /* reserve control stack/TCB and command queue before driver allocations */
 video_standard_t menu_standard(void);
 void control_print(void);
 void control_print_beat(void);   /* STATUS line every 2 s (console.c) */
@@ -246,6 +270,9 @@ int receiver_obs_cn_x10(void);
 void receiver_level_roll(bool no_carrier, bool video);   /* video: sync seen this second */   /* 1 Hz, the supervisor (diag.c) */
 rx_level_t receiver_level(void);    /* last full second */
 bool receiver_noise_learned(void);
+/* Highest useful gain row: the table maximum, or behind an external LNA the
+ * highest row whose receiver noise does not fold (agc.h LEVEL_TOP_NOISE_MAX_X16). */
+uint8_t receiver_gain_top(void);
 void receiver_pair_sweep_toggle(void);   /* bench, console Q */
 #include "cn_auto.h"
 cna_reading_t receiver_cn_reading(void);   /* C/N-AUTO: value, confidence, source */

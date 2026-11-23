@@ -10,10 +10,16 @@ enum {
     EXP_GAIN, EXP_DFILT, EXP_AFC, EXP_DEMOD, EXP_IQ_CORR, EXP_PHASE_REPAIR,
     EXP_AUTO_PROFILE, EXP_FAST_GAIN, EXP_FOLD_RADIUS, EXP_FOLD_MEMORY,
     EXP_LEVEL_TARGET, EXP_LEVEL_RELEASE, EXP_GAIN_RATE, EXP_GAIN_CAP,
-    EXP_LOG_CADENCE, EXP_LNA_BIAS, EXP_CURRENT, EXP_LOOP_CAP, EXP_SPUR0, EXP_IQ_LANE, EXP_ITEMS,
+    EXP_LOG_CADENCE, EXP_LNA_BIAS, EXP_CURRENT, EXP_LOOP_CAP, EXP_SPUR0, EXP_IQ_LANE, EXP_CLOCK_D10,
+    EXP_OUTPUT_AUTO, EXP_STRONG_LANE, EXP_LEVEL_TOP, EXP_LOW_DC, EXP_ITEMS,
     EXP_DAC = EXP_ITEMS, EXP_RESET, EXP_BACK, EXP_MENU_ITEMS
 };
-#define EXP_VERSION 1u
+/* 2 (2026-11-14): AUTO OUTPUT's values swapped to OFF/ON, OFF the baseline
+ * (operator: every applied word is a verified ~5 ms restart, unproven on a
+ * goggle). experimental_load migrates a version-1 blob: the other items
+ * keep their values, AUTO OUTPUT starts OFF. */
+#define EXP_VERSION 2u
+#define EXP_VERSION_V1 1u
 
 typedef struct { const char *name; uint8_t count; const char *values[8]; } experimental_item_t;
 static const experimental_item_t experimental_items[EXP_ITEMS] = {
@@ -31,6 +37,13 @@ static const experimental_item_t experimental_items[EXP_ITEMS] = {
     {"LOOP CAP", 8, {"STOCK", "BIN 0", "BIN 1", "BIN 2", "BIN 3", "BIN 4", "BIN 5", "BIN 6"}},
     {"SPUR 0", 3, {"STOCK", "+512", "-512"}},
     {"IQ LANE", 3, {"ULTRA", "FINE", "COARSE"}},
+    {"Clock Pin D10", 2, {"OFF", "ON"}},
+    {"AUTO OUTPUT", 2, {"OFF", "ON"}},     /* output_auto.h: the video level from the measured sync and white (v2 order) */
+    {"STRONG LANE", 2, {"ON", "OFF"}},     /* strong_lane.h: a coarser IQ lane when the lowest gain rows still fold */
+    /* agc.h LEVEL_TOP_NOISE_MAX_X16: the most receiver noise (cells^2) the top
+     * gain row may carry; behind an external LNA it sets the highest row. */
+    {"LEVEL TOP", 4, {"9", "12", "16", "6"}},
+    {"LOW DC", 2, {"ON", "OFF"}},          /* calibration_dc.c: DC hold and servo on the rows under the DC table */
 };
 typedef struct { uint8_t version, value[EXP_ITEMS]; } experimental_blob_t;
 /* Reject the entire blob on invalid data; never load half an experiment. */
@@ -67,3 +80,6 @@ bool experimental_reboot_needed(void);
 bool experimental_transfer_active(void);
 
 uint32_t experimental_revision(void);
+
+/* Latched at boot: clock and DAC wiring change together, never live. */
+bool experimental_clock_d10(void);

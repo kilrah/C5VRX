@@ -15,13 +15,19 @@ const unsupportedWarning = $('unsupportedWarning');
 const tabGithub = $('tabGithub');
 const tabAlpha = $('tabAlpha');
 const tabLocal = $('tabLocal');
+const tabHwx = $('tabHwx');
 const paneAlpha = $('paneAlpha');
 const paneGithub = $('paneGithub');
 const paneLocal = $('paneLocal');
+const paneHwx = $('paneHwx');
 
 const selectAlphaBuild = $('selectAlphaBuild');
 const selectAlphaPackageType = $('selectAlphaPackageType');
 const alphaBuildDetails = $('alphaBuildDetails');
+
+const selectHwxBuild = $('selectHwxBuild');
+const selectHwxPackageType = $('selectHwxPackageType');
+const hwxBuildDetails = $('hwxBuildDetails');
 
 const selectRelease = $('selectRelease');
 const selectPackageType = $('selectPackageType');
@@ -41,7 +47,7 @@ const progressStatusText = $('progressStatusText');
 const progressPercentText = $('progressPercentText');
 const consoleOutput = $('consoleOutput');
 
-let activeSource = 'alpha'; // 'alpha' (C5VRX-5) | 'local' | 'github' (legacy builds)
+let activeSource = 'alpha'; // 'alpha' (C5VRX-5) | 'local' | 'hwx' (hardware experiments) | 'github' (legacy builds)
 let port = null;
 let transport = null;
 let esploader = null;
@@ -50,6 +56,7 @@ let isConnecting = false;
 let isFlashing = false;
 let githubReleases = [];
 let githubAlphaBuilds = [];
+let githubHwxBuilds = [];
 let localFileBinary = null;
 
 // Shown only when neither the Pages index nor the GitHub API answers.
@@ -68,6 +75,9 @@ const FALLBACK_RELEASES = [
 ];
 const VERSION_TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ALPHA_TAG_PATTERN = /^c5vrx5-(?:pr-[0-9]+|v5\.[0-9]+\.[0-9]+)$/;
+// Hardware experiments: immutable versions per experiment from main
+// (c5vrx5-hwx-<id>-v5.0.N) and one channel per experiment and PR.
+const HWX_TAG_PATTERN = /^c5vrx5-hwx-([a-z0-9_]+)-(?:v(5\.[0-9]+\.[0-9]+)|pr-([0-9]+))$/;
 
 function log(msg, type = 'info') {
   if (type === 'error') $('flashLog').open = true;
@@ -95,7 +105,7 @@ function checkSerialSupport() {
 function activateSource(source) {
   if (isFlashing) return;
   activeSource = source;
-  for (const [button, pane, name] of [[tabGithub, paneGithub, 'github'], [tabAlpha, paneAlpha, 'alpha'], [tabLocal, paneLocal, 'local']]) {
+  for (const [button, pane, name] of [[tabGithub, paneGithub, 'github'], [tabAlpha, paneAlpha, 'alpha'], [tabLocal, paneLocal, 'local'], [tabHwx, paneHwx, 'hwx']]) {
     button.setAttribute('aria-pressed', String(source === name));
     button.classList.toggle('active', source === name);
     pane.classList.toggle('active', source === name);
@@ -106,6 +116,8 @@ function activateSource(source) {
 tabGithub.addEventListener('click', () => activateSource('github'));
 tabAlpha.addEventListener('click', () => activateSource('alpha'));
 tabLocal.addEventListener('click', () => activateSource('local'));
+tabHwx.addEventListener('click', () => activateSource('hwx'));
+selectHwxBuild.addEventListener('change', () => onHwxBuildSelected());
 selectAlphaBuild.addEventListener('change', () => onAlphaBuildSelected());
 selectRelease.addEventListener('change', () => onReleaseSelected(parseInt(selectRelease.value, 10)));
 
@@ -170,6 +182,7 @@ async function fetchReleases({ quiet = false } = {}) {
   if (!quiet) {
     selectRelease.innerHTML = '<option value="">Fetching firmware index…</option>';
     selectAlphaBuild.innerHTML = '<option value="">Fetching C5VRX-5 builds…</option>';
+    selectHwxBuild.innerHTML = '<option value="">Fetching hardware experiments…</option>';
   }
   const say = quiet ? () => {} : log;
 
@@ -208,19 +221,35 @@ async function fetchReleases({ quiet = false } = {}) {
   const isPr = rel => Number(rel.tag_name.startsWith('c5vrx5-pr-'));
   const alpha = data.filter(rel => ALPHA_TAG_PATTERN.test(rel.tag_name || ''))
     .sort((a, b) => (isPr(a) - isPr(b)) || byDate(a, b));
+  // Hardware experiments: by experiment, its versions (newest first) before PR channels.
+  const hwxKey = rel => rel.tag_name.match(HWX_TAG_PATTERN);
+  const versionParts = v => (v || '').split('.').map(Number);
+  const byVersion = (a, b) => {
+    const [x, y] = [versionParts(hwxKey(a)[2]), versionParts(hwxKey(b)[2])];
+    for (let i = 0; i < 3; ++i) if (x[i] !== y[i]) return (y[i] || 0) - (x[i] || 0);
+    return 0;
+  };
+  const hwx = data.filter(rel => HWX_TAG_PATTERN.test(rel.tag_name || ''))
+    .sort((a, b) => hwxKey(a)[1].localeCompare(hwxKey(b)[1]) ||
+      (Number(Boolean(hwxKey(a)[3])) - Number(Boolean(hwxKey(b)[3]))) ||
+      (hwxKey(a)[3] ? byDate(a, b) : byVersion(a, b)));
   if (isFlashing) return;   // never swap the lists under a running flash
   const signature = list => list.map(rel => `${rel.tag_name}@${rel.published_at || ''}`).join(',');
   const releasesChanged = signature(releases) !== signature(githubReleases);
   const alphaChanged = signature(alpha) !== signature(githubAlphaBuilds);
-  if (quiet && !releasesChanged && !alphaChanged) return;
+  const hwxChanged = signature(hwx) !== signature(githubHwxBuilds);
+  if (quiet && !releasesChanged && !alphaChanged && !hwxChanged) return;
   const keepRelease = githubReleases[Number(selectRelease.value)]?.tag_name;
   const keepAlpha = githubAlphaBuilds[Number(selectAlphaBuild.value)]?.tag_name;
+  const keepHwx = githubHwxBuilds[Number(selectHwxBuild.value)]?.tag_name;
   githubReleases = releases;
   githubAlphaBuilds = alpha;
-  say(`Available: ${githubAlphaBuilds.length} C5VRX-5 build(s), ${githubReleases.length} legacy release(s).`);
+  githubHwxBuilds = hwx;
+  say(`Available: ${githubAlphaBuilds.length} C5VRX-5 build(s), ${githubHwxBuilds.length} hardware experiment build(s), ${githubReleases.length} legacy release(s).`);
 
   if (!quiet || releasesChanged) populateReleaseDropdown(quiet ? keepRelease : undefined);
   if (!quiet || alphaChanged) populateAlphaBuildDropdown(quiet ? keepAlpha : undefined);
+  if (!quiet || hwxChanged) populateHwxBuildDropdown(quiet ? keepHwx : undefined);
   if (quiet) log(`Firmware list updated: ${githubAlphaBuilds.length} C5VRX-5 build(s).`);
   updateFlashButtonState();
 }
@@ -250,6 +279,43 @@ function populateAlphaBuildDropdown(keepTag) {
     selectAlphaBuild.innerHTML = '<option value="">No C5VRX-5 builds published yet</option>';
     alphaBuildDetails.hidden = true;
   }
+}
+
+function populateHwxBuildDropdown(keepTag) {
+  selectHwxBuild.replaceChildren();
+  // One group per experiment; its newest version is marked Latest.
+  let group = null;
+  let latestShown = false;
+  githubHwxBuilds.forEach((rel, index) => {
+    const [, id, version, pr] = rel.tag_name.match(HWX_TAG_PATTERN);
+    if (!group || group.label !== id) {
+      group = document.createElement('optgroup');
+      group.label = id;
+      selectHwxBuild.appendChild(group);
+      latestShown = false;
+    }
+    const opt = document.createElement('option');
+    opt.value = index;
+    opt.textContent = pr ? `${id} — PR #${pr} / unmerged`
+      : `${id} v${version}${latestShown ? '' : ' (Latest)'}`;
+    if (!pr) latestShown = true;
+    group.appendChild(opt);
+  });
+  if (githubHwxBuilds.length) {
+    const kept = githubHwxBuilds.findIndex(rel => rel.tag_name === keepTag);
+    selectHwxBuild.value = String(kept >= 0 ? kept : 0);
+    onHwxBuildSelected();
+  } else {
+    selectHwxBuild.innerHTML = '<option value="">No hardware experiments published yet</option>';
+    hwxBuildDetails.hidden = true;
+  }
+}
+
+function onHwxBuildSelected() {
+  const rel = githubHwxBuilds[Number(selectHwxBuild.value)];
+  if (!rel) return;
+  showDetails(hwxBuildDetails, ['infoHwxBuildName', 'infoHwxBuildDate', 'infoHwxBuildTag', 'infoHwxBuildAssets'], rel);
+  updateFlashButtonState();
 }
 
 function showDetails(box, ids, rel) {
@@ -298,6 +364,8 @@ function updateFlashButtonState() {
     btnFlash.disabled = !githubReleases[parseInt(selectRelease.value, 10)];
   } else if (activeSource === 'alpha') {
     btnFlash.disabled = !githubAlphaBuilds[parseInt(selectAlphaBuild.value, 10)];
+  } else if (activeSource === 'hwx') {
+    btnFlash.disabled = !githubHwxBuilds[parseInt(selectHwxBuild.value, 10)];
   } else {
     btnFlash.disabled = localFileBinary === null;
   }
@@ -309,6 +377,9 @@ function getSelectedRemoteBuild() {
   }
   if (activeSource === 'alpha') {
     return { release: githubAlphaBuilds[parseInt(selectAlphaBuild.value, 10)], packageType: selectAlphaPackageType.value };
+  }
+  if (activeSource === 'hwx') {
+    return { release: githubHwxBuilds[parseInt(selectHwxBuild.value, 10)], packageType: selectHwxPackageType.value };
   }
   return { release: null, packageType: null };
 }
@@ -567,6 +638,9 @@ btnFlash.addEventListener('click', async () => {
   const selected = getSelectedRemoteBuild();
   if (activeSource === 'alpha' && /^c5vrx5-pr-/.test(selected.release?.tag_name || '') &&
       !window.confirm('Flash an unmerged C5VRX-5 PR build? It may fail to boot or produce broken video.')) return;
+  if (activeSource === 'hwx' && !window.confirm(
+    `Flash hardware experiment ${selected.release?.tag_name || ''}? It is a bench build without DAC video output ` +
+    'and drives pins for external hardware (see its hwx.h). Flash a normal C5VRX-5 build to go back.')) return;
 
   isFlashing = true;
   syncDeviceControls();
@@ -733,6 +807,7 @@ function receiverValues(v) {
     demod: v.demod,
     liveProfile: v.liveProfile === undefined ? '' : v.liveProfile ? 'ON' : 'OFF · REPORT ONLY',
     profile: v.profile,
+    filter: v.filter,
     dac: !v.dacStep ? '' : v.dacStep === 'PATTERN' ? 'TEST PATTERN ON SCREEN'
       : `${v.dacStep}${v.dacStep === 'NONE' || v.dacStep === 'ALL' ? '' : ' ONLY'} · EXPECT ${v.dacExpect} mV`
   };
@@ -855,7 +930,7 @@ setInterval(() => {
 
 function syncDeviceControls() {
   const supported = 'serial' in navigator;
-  for (const control of [tabGithub, tabAlpha, tabLocal, selectAlphaBuild, selectAlphaPackageType, selectRelease, selectPackageType, selectBaud, chkEraseAll, inputLocalFile, inputFlashOffset, $('btnBrowseFile')]) {
+  for (const control of [tabGithub, tabAlpha, tabLocal, tabHwx, selectAlphaBuild, selectAlphaPackageType, selectHwxBuild, selectHwxPackageType, selectRelease, selectPackageType, selectBaud, chkEraseAll, inputLocalFile, inputFlashOffset, $('btnBrowseFile')]) {
     control.disabled = isFlashing;
   }
   const terminalConnected = serialConsole.state === 'connected';

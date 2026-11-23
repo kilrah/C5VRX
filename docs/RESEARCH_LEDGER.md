@@ -1,5 +1,84 @@
 # C5VRX research ledger (C5VRX-1 to C5VRX-5)
 
+## Hardware experiment FPGA_IQ: raw Q4/I4 to an FPGA (2026-11-16)
+
+Operator request: a hardware experiment build without the resistor DAC that
+sends the raw IQ bits to an FPGA, wired as the operator's Tang Primer 25K
+Dock PMOD J4 table. Extends the PR #257 Clock Pin D10 work and LAP87's FPGA
+capture (issue #256): the FPGA gets the receiver's input instead of the
+decoder output. Source/tap: MODEM_DIAG ULTRAFINE Q4/I4 through the GPIO
+matrix straight to the pre-2026-10-25 IQ pads {1,0,25,7,10,5,3,4}; no CPU,
+DMA, ring or lookup in the FPGA path, no clock pin (the FPGA samples on its
+own clock). The receiver keeps its RX40/raw32K loopback; PARLIO TX runs on
+no pads. Evidence: host checks of the pin map and a firmware build only.
+Pin map and wiring: `hardware_experiments/fpga_iq/hwx.h`.
+Menu on the IQ pads (same day, operator request): while the menu or a
+status screen is shown and no receiver pause measures IQ, the GPIO matrix
+puts PARLIO TX (the menu raster, six-bit codes on iq[5:0], iq[7:6] = 0) on
+the eight pads; `receiver_pause`, menu close and the boot splash route
+MODEM_DIAG back. The receiver does not read IQ while the menu is shown
+(`receiver_active`). Firmware build only; no board or FPGA check yet.
+
+## D10 sample clock and six-bit DAC (2026-10-31)
+
+Operator decision in PR #257 (2026-10-30): abandon planned 7/8-bit DAC
+support, export the sample clock on D10/GPIO10, relocate bit 2 from
+D6/GPIO11 to D3/GPIO7. This supersedes the future expansion reservations
+in the GPIO27 experiment below; the existing PCB footprints are historical.
+
+Extends C5VRX by Twotoz and contributors' PARLIO output and LAP87's FPGA
+bench report in issue #256: GPIO2 clock measured at 40.0 MHz, six lanes,
+falling-edge data/rising-edge capture, identical [D,D] pairs, luma HDMI lock.
+GPIO11 bit-2 rises one TX clock late in 5-8% of pairs in that setup.
+Those are measurements of the old GPIO2-clock builds, not proof of D10/D3.
+
+EXPERIMENTAL / Clock Pin D10 defaults OFF, persists in NVS and applies at
+boot. ON changes both TX clock and bit-2 routing together; OFF keeps the
+original six-resistor wiring. Pending changes never reroute a live or menu
+bus; the reboot indicator and console T distinguish requested/active state.
+Move the 2k branch when changing modes. Leave R8/R9 DNP and SJ2/SJ3 open.
+Both modes share the normal packaged firmware. No CPU sample pacing or
+new DSP stage: MODEM_DIAG Q4/I4 -> RX40 -> raw32K -> two-lookup TX
+BitScrambler -> six-bit composite codes, unique20 as [D,D] at TX40.
+Clock may stop during halted restarts; external capture must reacquire.
+
+Host tests cover production TX setup/error propagation and saved/active
+state across reboot, old settings migration and flight-log compatibility.
+D10/D3 electrical timing, the 25 ns observation, current-base reception,
+FPGA colour and range still require bench validation. This is an optional
+integration tap; remove its menu ID only with wire-format compatibility,
+routing, tests and documentation if no integration uses it.
+
+## Edge window study (2026-11-10, host only)
+
+Extends the sign-preserving lane slices and the retired adaptive-lane
+controller of C5VRX-3/4, IQLaneFusion's ADC bit model, AUTO OUTPUT and
+U50P64-R1. `research/edge_window.py`: at one analog gain (top-row noise) the
+ultrafine lane decodes to about 8 dB C/N, fine 2-15 dB, coarse 8-24 dB, with
+the unchanged U80P64-R1 table; residual DC costs 0.6-0.8 dB per cell at the
+edge. `research/output_tip_headroom.py`: an affine output word with the sync
+tip on code 3 loses lines at 0-2 dB C/N that 1.0x keeps; the tip moved to
+code 16. Source: MODEM_DIAG Q4/I4 at RX40, raw 32 KiB ring, two lookups,
+unique CVBS20 as [D,D] at TX40, all unchanged; no CPU in the sample path. No
+live lane change, no PHY write and no board measurement: a route change on a
+carrier and a gain write that stays in PBUS debug mode are open board
+prototypes. See docs/FINDINGS.md "Edge window".
+
+## STRONG LANE: a coarser lane on the gain floor (2026-11-13, host policy only)
+
+Extends the sign-preserving lane slices, the retired adaptive-lane controller
+and protected lane handover of C5VRX-3/4 and the Edge window study above.
+`main/strong_lane.h`, EXPERIMENTAL > STRONG LANE (default ON): only with the
+analog gain on rows 0-9 and no lower row asked, a carrier that keeps folding
+moves to the fine and then the coarse lane (6 / 12 dB more room); a small or
+absent carrier returns to ultrafine. Source, rates and ownership unchanged:
+MODEM_DIAG Q4/I4 at RX40, raw 32 KiB ring, two lookups, unique CVBS20 as
+[D,D] at TX40; the route is eight GPIO-matrix writes by the gain observer,
+no PHY write, no CPU in the sample path. The mixed samples during the route
+writes are not measured and no lane tags prove a seamless switch. Trigger:
+an external LNA close in (Discord report). See docs/FINDINGS.md "External
+LNA close in". Not a general live lane control; that stays retired.
+
 C5VRX by Twotoz and the C5VRX contributors. This is the project's research
 provenance ledger, moved verbatim from `AGENTS.md` on 2026-10-28 so that the
 agent instructions there carry only the current C5VRX-5 rules. The

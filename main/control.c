@@ -9,6 +9,7 @@
 #include <string.h>
 #include "afc_ctrl.h"
 #include "output_level.h"
+#include "output_auto.h"
 #include "profile_logic.h"
 #include "cn_estimate.h"
 #include "analog_video_detect.h"
@@ -34,6 +35,8 @@
 
 typedef struct {
     StaticTask_t task;
+    StaticQueue_t commands;
+    uint8_t command_storage[16u * sizeof(int)];
     StackType_t stack[CONTROL_STACK_BYTES/sizeof(StackType_t)] __attribute__((aligned(portBYTE_ALIGNMENT)));
 } control_memory_t;
 static control_memory_t *s_control_memory;
@@ -140,16 +143,34 @@ static int strength(const metrics_t *m, uint8_t gain)
     return (coherence * 2 + power + headroom) / 4;
 }
 
-/* Decoder P64 <-> U85Q (console m, menu DEMOD), kept in NVS "demod": live, a
+/* Decoder P64 -> U85Q -> U50P64 -> D32 (console m, menu DEMOD), kept in NVS TRANSPORT_DEMOD_KEY: live, a
  * verified restart behind the shared 5 s guard; in the menu, applied by the
  * restart on menu exit. */
 static void demod_next(void)
 {
     const uint8_t next = (uint8_t)((transport_demod() + 1u) % TRANSPORT_DEMODS);
     const bool ok = transport_set_demod(next);
-    if (ok) (void)blob_store(DEMOD_NVS_KEY, &next, sizeof(next));
+    if (ok) (void)blob_store(TRANSPORT_DEMOD_KEY, &next, sizeof(next));
     printf("DEMOD switch to=%s result=%s active=%s%s\n", transport_demod_name(next), ok ? "ok" : "refused",
            transport_program_name(), ok ? "" : " (guard, fault or rollback: T TRANSPORT and DEMOD)");
+}
+
+/* U50P64-R1 follows at most ~5 MHz of instantaneous frequency (loop gain
+ * 0.5) and loses to U80P64-R1 from deviation ~1.2 in the host model
+ * (research/u50p64.py): on a VTX measured wider than U50P64_MAX_DEV_X100 the
+ * session falls back to U80P64-R1. The stored choice is kept: the next boot
+ * starts on it again and decides again on its own measurement. */
+#define U50P64_MAX_DEV_X100 110
+static uint32_t s_demod_fallbacks;
+static void demod_deviation_guard(void)
+{
+    if (transport_demod() != TRANSPORT_DEMOD_U50P64 || s_menu_active) return;
+    const int dev = profile_live_deviation_x100();
+    if (dev < U50P64_MAX_DEV_X100) return;
+    if (!transport_set_demod(TRANSPORT_DEMOD_P64)) return;   /* guard: the next window asks again */
+    ++s_demod_fallbacks;
+    printf("DEMOD fallback to=%s deviation_x100=%d limit=%d (U50P64-R1 is for deviation <= ~1.0)\n",
+           transport_program_name(), dev, U50P64_MAX_DEV_X100);
 }
 
 static void after_retune(void)
@@ -333,7 +354,7 @@ static void menu_action(void)
             if (!phy_dfilt_select(PHY_DFILT_MODE_DEFAULT)) s_exp_failed = true;
             if (!s_afc_enabled) toggle_afc();
             if (!transport_set_demod(TRANSPORT_DEMOD_DEFAULT)) s_exp_failed = true;
-            else { const uint8_t d = TRANSPORT_DEMOD_DEFAULT; (void)blob_store(DEMOD_NVS_KEY, &d, 1); }
+            else { const uint8_t d = TRANSPORT_DEMOD_DEFAULT; (void)blob_store(TRANSPORT_DEMOD_KEY, &d, 1); }
             prefs_save();
         }
         else if (k == EXP_DAC) menu_dac_step();
@@ -396,7 +417,7 @@ static void command(int c, unsigned *menu_idle)
 #endif
     switch (c) {
     case 'G': receiver_set_gain_mode(receiver_gain_mode_next(receiver_gain_mode()), true); prefs_save(); break;
-    /* Decoder P64 <-> U85Q: a verified restart behind the shared 5 s guard. */
+    /* Decoder P64 -> U85Q -> U50P64: a verified restart behind the shared 5 s guard. */
     case 'm': demod_next(); break;
     /* Bench: the real gain step of every table row pair (receiver.c). */
     case 'Q': receiver_pair_sweep_toggle(); break;
@@ -454,6 +475,66 @@ static uint32_t s_vq_periods;
  * a preempted copy fails its overrun check. */
 /* Picture measure totals and its CPU cost per window (T PICTURE). */
 static struct { picture_state_t state; uint32_t found, expected, windows, us_max; uint64_t us_sum; } s_pic;
+
+/* AUTO OUTPUT (output_auto.h): the video level from the measured sync tip,
+ * sync depth and peak white of the live decoder. Context: the channel and
+ * the decoder; another one starts from the manual level again. */
+static output_auto_t s_out_auto;
+static uint32_t s_out_auto_key = UINT32_MAX;
+static uint32_t s_out_auto_windows, s_out_auto_refused;
+static void output_auto_service(bool sync_confirmed, const afc2_result_t *r, bool picture, const picture_sync_t *ps,
+                                int64_t now)
+{
+    const bool on = experimental_get(EXP_OUTPUT_AUTO) != 0u && transport_output() == 0u && !s_menu_active;   /* OFF by default */
+    const uint32_t key = (uint32_t)rf_channel_index() << 8 | transport_demod();
+    if (!on || key != s_out_auto_key) {
+        /* Back to the manual level first; a refusal (the shared guard) is
+         * tried again on the next window. Then measure this context afresh. */
+        if (s_menu_active) return;
+        if (!transport_set_output_affine(0u)) return;
+        if (s_out_auto.word) printf("OUTPUT auto reset (%s)\n", on ? "context" : "off");
+        output_auto_reset(&s_out_auto);
+        s_out_auto_key = on ? key : UINT32_MAX;
+        return;
+    }
+    /* The remembered word must be the one that is live: a manual OUTPUT
+     * cycled away from 1.0x and back inside one menu visit, or a rollback of
+     * another restart, clears the affine word while channel and decoder stay
+     * the same. Without this the next candidates matched the remembered word
+     * and AUTO OUTPUT never applied again in that context. */
+    if (s_out_auto.word && transport_output_word() != s_out_auto.word) {
+        printf("OUTPUT auto reset (live output changed)\n");
+        output_auto_reset(&s_out_auto);
+    }
+    /* Confirmed sync below blanking, at least 80 % of this window's sync
+     * pulses, levels apart from the bulk: else nothing is learned. */
+    if (!sync_confirmed || r->polarity >= 0 || !picture || !s_pic.state.levels || !ps->expected ||
+        ps->found * 5u < ps->expected * 4u) return;
+    const int32_t depth_khz = r->porch_khz - r->sync_khz;
+    if (depth_khz <= 0) return;
+    ++s_out_auto_windows;
+    /* DAC codes x4: 63 codes over -6..+9 MHz. */
+    const unsigned depth_x4 = (unsigned)(depth_khz * 252 / 15000);
+    unsigned word;
+    if (!output_auto_observe(&s_out_auto, s_pic.state.tip_x4, s_pic.state.top_x4, depth_x4, now, &word)) return;
+    if (transport_set_output_affine(word)) {
+        output_auto_applied(&s_out_auto, word, now);
+        const uint8_t e[3] = {(uint8_t)output_affine_gain_q3(word), (uint8_t)output_affine_tip(word),
+                              (uint8_t)(s_out_auto.last_depth_x4 > 255u ? 255u : s_out_auto.last_depth_x4)};
+        flightlog_event(FLOG_E_OUTPUT_AUTO, e, sizeof(e));
+        printf("OUTPUT auto gain_x8=%u src_tip=%u depth_x4=%u span_x4=%u (%s)\n", output_affine_gain_q3(word),
+               output_affine_tip(word), s_out_auto.last_depth_x4, s_out_auto.last_span_x4, transport_output_name());
+    } else ++s_out_auto_refused;   /* guard or rollback: the candidate stays, the next batch asks again */
+}
+void output_auto_print(void)
+{
+    printf("OUTPUT_AUTO enabled=%u word_gain_x8=%u src_tip=%u batches=%lu rejected=%lu applied=%lu refused=%lu "
+           "windows=%lu tip_x4=%u depth_x4=%u span_x4=%u live=%s\n", experimental_get(EXP_OUTPUT_AUTO) != 0u,
+           s_out_auto.word ? output_affine_gain_q3(s_out_auto.word) : 8u, s_out_auto.word ? output_affine_tip(s_out_auto.word) : 0u,
+           (unsigned long)s_out_auto.batches, (unsigned long)s_out_auto.rejected, (unsigned long)s_out_auto.applied,
+           (unsigned long)s_out_auto_refused, (unsigned long)s_out_auto_windows, s_out_auto.last_tip_x4,
+           s_out_auto.last_depth_x4, s_out_auto.last_span_x4, transport_output_name());
+}
 
 static bool copy_afc_window(uint8_t *dst)
 {
@@ -566,12 +647,15 @@ static void control_task(void *arg)
         bool window_ok = afc_copied && afc2_envelope_stationary(s_afc_window, AFC_WINDOW_BYTES);
         /* Picture measure (picture_sync.h): every live window, also those the
          * AFC leaves out (a gain write, settle, fading): the goggles see those. */
+        picture_sync_t ps = {0, 0};
+        bool picture = false;
         if (copied && !s_menu_active && (afc_copied || copy_afc_window(s_afc_window))) {
             unsigned bits;
             const uint16_t *lut = transport_decoder_lut(&bits);
             if (lut) {
                 const int64_t t0 = esp_timer_get_time();
-                const picture_sync_t ps = picture_sync_window(&s_pic.state, s_afc_window, AFC_WINDOW_BYTES, lut, bits);
+                ps = picture_sync_window(&s_pic.state, s_afc_window, AFC_WINDOW_BYTES, lut, bits);
+                picture = true;
                 const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
                 if (ps.expected) diag_picture(ps.found, ps.expected);
                 s_pic.found += ps.found; s_pic.expected += ps.expected; ++s_pic.windows;
@@ -602,6 +686,8 @@ static void control_task(void *arg)
             s_afc_evidence.residual_khz=r.porch_khz-afc.target_khz;
         }
         if (valid) { s_last_video_us = now; standard_vote(r.standard); profile_observe(&r); }
+        output_auto_service(valid && gain_epoch == s_gain_epoch, &r, picture, &ps, now);
+        demod_deviation_guard();
         if (!s_afc_enabled && rf_offset_khz() != 0) {
             rf_set_offset_khz(0);
             s_last_gain_write_us = esp_timer_get_time();
@@ -691,7 +777,10 @@ void control_start(void)
         s_afc_sign_state = AFC2_SIGN_CONFIRMED;
         s_afc_sign_saved = true;
     }
-    s_commands = xQueueCreate(16, sizeof(int));
+    /* Queue storage shares the early reservation: the optional splash must
+     * not consume the final heap bytes needed by control startup either. */
+    s_commands = xQueueCreateStatic(16, sizeof(int), s_control_memory->command_storage,
+                                   &s_control_memory->commands);
     ESP_ERROR_CHECK(s_commands ? ESP_OK : ESP_ERR_NO_MEM);
     /* IDF task stack depths are bytes. Reserve before driver allocations,
      * then supply that same 6144-byte stack and TCB without another malloc. */

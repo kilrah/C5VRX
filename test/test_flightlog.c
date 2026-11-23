@@ -97,6 +97,9 @@ int main(void)
           u.output_level == 6u && u.output_samples == 500u && u.output_fresh_samples == 480u &&
           u.native_h_lock_pct == 97u && u.native_h_lines == 15625u && u.longest_h_unlock_ms == 106u &&
           u.picture_pct == 87u && u.picture_windows == 14u);
+    check("old experiment summary keeps fields and defaults D10 off",
+          flog_unpack_second(b + FLOG_BLOCK_HEAD + 2, FLOG_SECOND_LEN - 1u, &u) &&
+          u.exp_mask == s.exp_mask && u.exp_values[9] == 2 && !u.exp_values[EXP_CLOCK_D10]);
     check("a short summary is refused", !flog_unpack_second(b + FLOG_BLOCK_HEAD + 2, FLOG_SECOND_LEN_V1 - 1u, &u));
     {   /* format-1 records (34 bytes) still read; the level is unknown */
         flog_second_t old;

@@ -1,19 +1,24 @@
 name: PR Channel Cleanup
 
-# Removes c5vrx5-pr-N prereleases whose PR is no longer open, then refreshes
+# Removes c5vrx5-pr-N and c5vrx5-hwx-<id>-pr-N prereleases whose PR is no longer open, then refreshes
 # the web flasher mirror. A sweep rather than a per-PR delete: pull_request
 # close events are not delivered for PRs with merge conflicts or outside the
 # build's path filter, so channels of closed PRs stayed in the flasher.
+# Runs after every C5VRX-5 Build (when firmware is published), on PR close
+# and by hand; no hourly schedule (operator, 2026-11-15: sweep when new
+# firmware goes in, not every hour).
 on:
   pull_request_target:   # base-repo context: runs on close even with conflicts; never checks out PR code
     types: [closed]
-  schedule:
-    - cron: '17 * * * *'
+  workflow_run:
+    workflows: ["C5VRX-5 Build"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: write   # delete releases and their tags
   actions: write    # dispatch the web flasher deployment
+  pull-requests: read # inspect PR state with the workflow token
 
 concurrency:
   group: pr-channel-cleanup
@@ -24,25 +29,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Remove channels of closed PRs
+        id: cleanup
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
-          tags="$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq '.[].tag_name' \
-            | grep -E '^c5vrx5-pr-[0-9]+$' || true)"
+          # jq returns success with no matches; API errors must still fail.
+          tags="$(gh api --paginate "repos/${repo}/releases?per_page=100" \
+            --jq '.[].tag_name | select(test("^c5vrx5-(hwx-[a-z0-9_]+-)?pr-[0-9]+$"))')"
+          # The open PRs in one listing: a failed listing aborts the sweep
+          # before anything is deleted. A per-PR lookup used to abort every
+          # run on one HTTP 404 (every run failed from 2026-11-13 on, so
+          # channels of closed PRs stayed in the flasher).
+          list="$(gh pr list --repo "$repo" --state open --limit 1000 --json number --jq '.[].number')"
+          open_prs=" $(echo $list) "
+          echo "Open PRs:${open_prs}"
           removed=0
           for tag in $tags; do
-            pr="${tag#c5vrx5-pr-}"
-            # Ask per PR: a failed lookup aborts the sweep instead of deleting.
-            state="$(gh pr view "$pr" --repo "$repo" --json state --jq .state)"
-            if [[ "$state" != "OPEN" ]]; then
-              echo "Removing ${tag} (PR #${pr} is ${state})"
-              gh release delete "$tag" --repo "$repo" --yes --cleanup-tag
-              removed=$((removed + 1))
-            fi
+            pr="${tag##*-pr-}"
+            if [[ "$open_prs" == *" ${pr} "* ]]; then continue; fi
+            echo "Removing ${tag} (PR #${pr} is not open)"
+            gh release delete "$tag" --repo "$repo" --yes --cleanup-tag
+            removed=$((removed + 1))
+            echo "removed=true" >> "$GITHUB_OUTPUT"
           done
           echo "Removed ${removed} PR channel(s)."
-          if (( removed > 0 )); then
-            gh workflow run deploy-web.yml --repo "$repo" --ref main
-          fi
+      # Refresh even if a later lookup fails after an earlier deletion.
+      - name: Refresh web flasher mirror
+        if: ${{ always() && steps.cleanup.outputs.removed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-web.yml --repo "$GITHUB_REPOSITORY" --ref main

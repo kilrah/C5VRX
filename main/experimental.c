@@ -9,6 +9,8 @@
 static experimental_blob_t s_exp = {.version = EXP_VERSION};
 static volatile bool s_save_pending;
 static uint32_t s_failed, s_revision;
+static bool s_clock_d10;
+bool experimental_clock_d10(void) { return s_clock_d10; }
 uint32_t experimental_revision(void) { return s_revision; }
 
 uint8_t experimental_get(unsigned item) { return item < EXP_ITEMS ? s_exp.value[item] : 0; }
@@ -25,8 +27,29 @@ static bool save(void)
 }
 void experimental_load(void)
 {
-    experimental_blob_t b;
-    if (blob_load("exp", &b, sizeof(b)) && experimental_blob_valid(&b)) s_exp = b;
+    experimental_blob_t b = {.version = EXP_VERSION};
+    /* Items are appended, never reordered: an older, shorter blob keeps its
+     * experiments and the newer items start on their baseline (before LOW
+     * DC: one byte shorter; before LEVEL TOP: two; before STRONG LANE: three;
+     * before AUTO OUTPUT: four; before Clock Pin D10: five). */
+    for (unsigned missing = 0; missing <= 5u; ++missing) {
+        memset(&b, 0, sizeof(b));
+        if (blob_load("exp", &b, sizeof(b) - missing)) break;
+        b = (experimental_blob_t){.version = EXP_VERSION};
+    }
+    /* Version 1 had AUTO OUTPUT as ON/OFF with ON the baseline: a stored 0
+     * cannot tell the default from a choice, so it starts OFF, the new
+     * baseline (an explicit OFF stays OFF). Saved by the next poll. */
+    if (b.version == EXP_VERSION_V1) {
+        b.version = EXP_VERSION;
+        b.value[EXP_OUTPUT_AUTO] = 0;
+        if (experimental_blob_valid(&b)) s_save_pending = true;
+    }
+    if (experimental_blob_valid(&b)) s_exp = b;
+#ifdef HWX_NO_DAC
+    s_exp.value[EXP_CLOCK_D10] = 0;   /* D10 is a hardware experiment pad */
+#endif
+    s_clock_d10 = experimental_get(EXP_CLOCK_D10) != 0;
 }
 bool experimental_phy_restore(void)
 {
@@ -57,10 +80,19 @@ unsigned experimental_boot_lane(void)
     const unsigned v = experimental_get(EXP_IQ_LANE);
     return v == 1 ? RF_LANE_FINE : v == 2 ? RF_LANE_COARSE : RF_LANE_ULTRAFINE;
 }
-bool experimental_reboot_needed(void) { return rf_lane() != experimental_boot_lane(); }
+/* A lane STRONG LANE selected live (receiver.c) is no IQ LANE experiment and
+ * needs no reboot; the transfer is still not the calibrated one. */
+static bool lane_experiment(void) { return rf_lane() != RF_LANE_ULTRAFINE && !receiver_strong_lane(); }
+bool experimental_reboot_needed(void)
+{
+    return (rf_lane() != experimental_boot_lane() && !receiver_strong_lane()) || s_clock_d10 != (experimental_get(EXP_CLOCK_D10) != 0);
+}
 bool experimental_set(unsigned item, uint8_t value)
 {
     if (item >= EXP_ITEMS || !experimental_items[item].count || value >= experimental_items[item].count) return false;
+#ifdef HWX_NO_DAC
+    if (item == EXP_CLOCK_D10 && value) return false;
+#endif
     const uint8_t old = item == EXP_AUTO_PROFILE ? profile_live_mode() : s_exp.value[item];
     if (old == value && s_exp.value[item] == value) { s_failed &= ~(1u << item); return true; }
     bool ok = true, locked = false;
@@ -109,16 +141,20 @@ uint32_t experimental_mask(void)
     experimental_snapshot(v);
     uint32_t mask = 0;
     for (unsigned i = 0; i < EXP_ITEMS; ++i) {
-        const unsigned baseline = i == EXP_GAIN ? GAIN_MODE_DEFAULT : i == EXP_DFILT ? PHY_DFILT_MODE_DEFAULT : 0;
-        if (v[i] != baseline) mask |= 1u << i;
+        const unsigned baseline = i == EXP_GAIN ? GAIN_MODE_DEFAULT : i == EXP_DFILT ? PHY_DFILT_MODE_DEFAULT :
+                                  i == EXP_DEMOD ? TRANSPORT_DEMOD_DEFAULT : 0;
+        /* U80P64-R1 is the default decoder's own deviation fallback (control.c), not an experiment. */
+        if (v[i] != baseline && !(i == EXP_DEMOD && v[i] == TRANSPORT_DEMOD_P64)) mask |= 1u << i;
     }
-    if (rf_lane() != RF_LANE_ULTRAFINE) mask |= 1u << EXP_IQ_LANE;
+    if (lane_experiment()) mask |= 1u << EXP_IQ_LANE;
+    if (s_clock_d10) mask |= 1u << EXP_CLOCK_D10;
     return mask;
 }
 void experimental_effective_snapshot(uint8_t values[EXP_ITEMS])
 {
     experimental_snapshot(values);
-    values[EXP_IQ_LANE] = rf_lane() == RF_LANE_FINE ? 1 : rf_lane() == RF_LANE_COARSE ? 2 : 0;
+    values[EXP_CLOCK_D10] = s_clock_d10;
+    values[EXP_IQ_LANE] = !lane_experiment() ? 0 : rf_lane() == RF_LANE_FINE ? 1 : 2;
 }
 void experimental_log_state(void)
 {

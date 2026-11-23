@@ -1,0 +1,599 @@
+{
+ "evidence": "host simulation only (sim.py physical-ADC model, 12 MHz filter, ADC gain 3, goggle model of p5t_eval); no board, picture, colour or range result",
+ "model": "U50P64-R1",
+ "table_sha256": "02dd219cec70f194892fb63ff59385fc8a34ab9b273ef82d0ca847bccb01016d",
+ "seeds": [
+  7301,
+  7302,
+  7303,
+  7304
+ ],
+ "selection_seeds": [
+  5101,
+  5102,
+  5103,
+  5104
+ ],
+ "standards": [
+  "NTSC",
+  "PAL"
+ ],
+ "rows": [
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.283,
+    "sinad_db": -8.54
+   },
+   "U50P64-R1": {
+    "lock": 0.171,
+    "sinad_db": -6.68
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.933,
+    "sinad_db": -6.52
+   },
+   "U50P64-R1": {
+    "lock": 0.809,
+    "sinad_db": -4.21
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.995,
+    "sinad_db": -4.2
+   },
+   "U50P64-R1": {
+    "lock": 0.797,
+    "sinad_db": -1.45
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 0.995,
+    "sinad_db": -1.82
+   },
+   "U50P64-R1": {
+    "lock": 0.993,
+    "sinad_db": 1.07
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 0.32
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 3.07
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 2.86
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.18
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 4.98
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 6.68
+   }
+  },
+  {
+   "deviation": 0.6,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 8.09
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 8.53
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.447,
+    "sinad_db": -7.72
+   },
+   "U50P64-R1": {
+    "lock": 0.63,
+    "sinad_db": -5.97
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.963,
+    "sinad_db": -5.68
+   },
+   "U50P64-R1": {
+    "lock": 0.96,
+    "sinad_db": -3.52
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.99,
+    "sinad_db": -3.18
+   },
+   "U50P64-R1": {
+    "lock": 0.991,
+    "sinad_db": -0.56
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": -0.55
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 2.19
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 1.64
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 4.26
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 4.23
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 6.26
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 6.26
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 7.64
+   }
+  },
+  {
+   "deviation": 0.7,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.23
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.29
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.553,
+    "sinad_db": -6.75
+   },
+   "U50P64-R1": {
+    "lock": 0.489,
+    "sinad_db": -5.35
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.939,
+    "sinad_db": -4.63
+   },
+   "U50P64-R1": {
+    "lock": 0.909,
+    "sinad_db": -2.97
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.984,
+    "sinad_db": -1.93
+   },
+   "U50P64-R1": {
+    "lock": 0.972,
+    "sinad_db": 0.05
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 0.995,
+    "sinad_db": 0.93
+   },
+   "U50P64-R1": {
+    "lock": 0.995,
+    "sinad_db": 3.28
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 3.29
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.6
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.84
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 7.51
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 7.81
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 8.71
+   }
+  },
+  {
+   "deviation": 0.85,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 10.72
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 10.12
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.621,
+    "sinad_db": -6.14
+   },
+   "U50P64-R1": {
+    "lock": 0.571,
+    "sinad_db": -5.35
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.971,
+    "sinad_db": -3.99
+   },
+   "U50P64-R1": {
+    "lock": 0.946,
+    "sinad_db": -3.13
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.994,
+    "sinad_db": -1.12
+   },
+   "U50P64-R1": {
+    "lock": 0.992,
+    "sinad_db": -0.18
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 2.08
+   },
+   "U50P64-R1": {
+    "lock": 0.996,
+    "sinad_db": 3.28
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 4.62
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 6.19
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 7.2
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 8.35
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.1
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.4
+   }
+  },
+  {
+   "deviation": 1.0,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 11.86
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 10.57
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.039,
+    "sinad_db": -5.73
+   },
+   "U50P64-R1": {
+    "lock": 0.09,
+    "sinad_db": -5.67
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.946,
+    "sinad_db": -3.65
+   },
+   "U50P64-R1": {
+    "lock": 0.887,
+    "sinad_db": -3.96
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.986,
+    "sinad_db": -0.76
+   },
+   "U50P64-R1": {
+    "lock": 0.972,
+    "sinad_db": -1.67
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 0.999,
+    "sinad_db": 2.64
+   },
+   "U50P64-R1": {
+    "lock": 0.999,
+    "sinad_db": 1.11
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.74
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 4.03
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 8.57
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 7.37
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 10.34
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.26
+   }
+  },
+  {
+   "deviation": 1.2,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 12.8
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 10.93
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": -2,
+   "U80P64-R1": {
+    "lock": 0.054,
+    "sinad_db": -5.68
+   },
+   "U50P64-R1": {
+    "lock": 0.0,
+    "sinad_db": -5.91
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 0,
+   "U80P64-R1": {
+    "lock": 0.462,
+    "sinad_db": -3.83
+   },
+   "U50P64-R1": {
+    "lock": 0.876,
+    "sinad_db": -4.82
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 2,
+   "U80P64-R1": {
+    "lock": 0.982,
+    "sinad_db": -1.27
+   },
+   "U50P64-R1": {
+    "lock": 0.984,
+    "sinad_db": -3.47
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 4,
+   "U80P64-R1": {
+    "lock": 0.999,
+    "sinad_db": 2.07
+   },
+   "U50P64-R1": {
+    "lock": 0.998,
+    "sinad_db": -2.02
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 6,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.59
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": -0.59
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 9,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 9.3
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 1.3
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 12,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 11.12
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 2.77
+   }
+  },
+  {
+   "deviation": 1.4,
+   "cn_db_20mhz": 20,
+   "U80P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 13.14
+   },
+   "U50P64-R1": {
+    "lock": 1.0,
+    "sinad_db": 5.24
+   }
+  }
+ ]
+}

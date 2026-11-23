@@ -28,9 +28,15 @@ outputs composite PAL/NTSC through a passive 6-bit resistor DAC: automatic
 gain control, a quick baseline boot with manual calibration, an on-screen
 menu, and browser-based flashing and controls.
 
-The demodulator is **U80P64-R1** ([evidence and limits](docs/P64.md)). It has
-one positive NTSC check; PAL, weak-signal behaviour and range still need
-hardware validation. Board findings, including the retired U85Q/kp/LP models
+The default demodulator is **D32-R2** (2026-11-15): the phase difference of
+successive samples in 32 sectors, with click suppression for steps no video
+carrier can make. On a board capture it left 41 % less colour noise (the
+coloured dots) than U50P64-R1, confirmed on the goggle; in the host model it
+holds the picture about as long as U50P64-R1 for a VTX of deviation ~0.7 and
+longer for wide VTXs, with a grainier luma just above the edge. **U50P64-R1**
+(loop gain 0.50) and **U80P64-R1** ([evidence and limits](docs/P64.md)) stay
+selectable. D32-R2's range is host-modelled only; a walk against U50P64-R1
+is still needed. Board findings, including the retired U85Q/kp/LP models
 and the removed sync flywheel, are in [docs/FINDINGS.md](docs/FINDINGS.md).
 
 ## Experimental firmware — flight safety warning
@@ -102,17 +108,81 @@ GND ---------------+------> GND (goggle / monitor AV-in ground)
 - Connect the node to the video input (tip) of the goggles, DVR or monitor,
   with a common ground. Standard E24 1 % resistors are fine; keep the wires
   short. Power comes over USB-C or the 5 V pin.
-- Too dim on some goggles: raise **OUTPUT** in the menu (0.5–5.0x, saved);
-  high levels can clip.
+- The video level is **OUTPUT** in the menu (0.5–5.0x, saved; high levels
+  can clip). EXPERIMENTAL > AUTO OUTPUT (off by default) lets it follow the
+  VTX while OUTPUT is 1.0x; every change it makes is a short (~5 ms) video
+  restart.
 - **Check the build with the DAC self-test** (`Z` or menu DAC TEST) before
   chasing picture problems: see
   [Building and testing the resistor DAC](docs/hardware/dac-build-and-test.md).
 
 IQ routing is internal (no wiring) and uses GPIO27 (the user LED, which may
-glow) and GPIO2. That keeps **D10/GPIO10 and D3/GPIO7 free for a future
-seventh/eighth DAC branch** (15 kΩ and 33 kΩ, added as *low* bits). Leave
-them **unpopulated**: the firmware is 6-bit, and the new IQ routes still need
-board validation ([pin-routing findings](docs/FINDINGS.md#gpio27-iq-loopback-experiment-2026-10-25)).
+glow) and GPIO2. The planned seven/eight-bit DAC expansion is cancelled;
+firmware stays six-bit. Leave the carrier's optional R8/R9 unpopulated and
+SJ2/SJ3 open.
+
+### Optional external LNA (more range)
+
+C5VRX-5 now supports an external low-noise amplifier in front of the
+XIAO. Tested with the **Zeenko ZK06-UM** (10 MHz–6 GHz, SMA;
+datasheet at 5.8 GHz: ~22.6 dB gain, ~1.0 dB noise figure), listed under
+[Build components](#build-components).
+
+- **Wiring:** antenna → LNA input → LNA output → IPX (U.FL) to SMA pigtail
+  → the XIAO's IPX antenna connector (both listed under
+  [Build components](#build-components)). Mind the arrow on the LNA: it
+  points from the antenna to the receiver. Keep the antenna-to-LNA cable as
+  short as possible: every dB lost before the LNA is lost range. Power the
+  LNA as its seller specifies.
+- **No setting needed.** The firmware measures its own receiver noise and
+  follows it: the gain stops where the LNA's noise would fold the 4-bit IQ
+  (about G67 with this LNA, G83 without), and the noise reference, signal
+  meter, AGC and live DC model adapt by themselves. Fitting or removing the
+  LNA needs no calibration. Let the receiver see a few seconds without a
+  VTX on its channel after the first boot with a new front end.
+- **What it gives:** the receiver's noise figure drops from ~6 dB to ~1 dB.
+  In a first indoor walk (a small house, rooms and cupboards) the picture
+  held to about **6.5 dB weaker signals** than the bare receiver on the
+  previous firmware (50 % picture near −93 dBm at the antenna against
+  −86.5 dBm). How much distance that is depends on the surroundings: about
+  1.5–1.7× in built-up areas, more in open space; an outdoor A/B is still to
+  come.
+- **Close in** the LNA's extra gain uses up the lowest gain rows sooner;
+  STRONG LANE (EXPERIMENTAL, on by default) takes over when even the lowest
+  row folds. EXPERIMENTAL > LEVEL TOP (9 default; 6 / 12 / 16) sets how much
+  noise the top gain row may carry.
+
+Details and measurements: [docs/FINDINGS.md](docs/FINDINGS.md), "Received
+level at the chip pin" and the external LNA notes.
+
+### Optional digital video capture: Clock Pin D10
+
+In **EXPERIMENTAL**, set **Clock Pin D10** to **ON**, then power off and
+move the existing **bit 2 / 2.0 kohm branch from D6/GPIO11 to D3/GPIO7**.
+On the next boot, D10/GPIO10 exports the **40 MHz PARLIO TX clock**, and
+bit 2 uses D3. OFF is the default and retains the original D4-D9 wiring;
+turning it off also needs a reboot and moving the branch back. The menu
+shows a reboot warning until the requested setting matches the active one.
+The ordinary PR firmware includes this option; no custom build is needed.
+
+For FPGA capture, tap the data pins **before the resistors**, use 3.3 V
+inputs and a common ground. With the option active, bit order low to high is
+D4, D5, **D3**, D7, D8, D9. D6 is disconnected from TX. Data shifts on
+falling clock edges; capture on rising edges and verify timing on your board.
+The bus is still six-bit composite video: live samples are identical pairs
+`[D,D]` at TX40, **20 MS/s unique codes**. The original colour burst is
+preserved; the external device owns sync recovery and colour decoding.
+Menu/startup rasters also use this bus. Halted TX/restarts can interrupt the
+clock and video; the capture device must reacquire. Console **T** reports
+`SAMPLE_CLOCK` with active/requested state, pin, rate and DAC-bit-2 pin.
+
+This extends [LAP87's capture tests](https://github.com/Twotoz/C5VRX/issues/256#issuecomment-6530295384).
+The GPIO11 bit-2 rising-edge delay reported there (25 ns) motivates the D3
+route; a timing fix on D3 is **not yet verified**. GPIO2 remains IQ-owned.
+DAC TEST labels bit 2 as D3 when active; in `tools/dac_check.py`, enter
+that branch's measurement using the existing `--d6` argument.
+USB DTR/RTS can trigger the ESP32-C5 USB-Serial-JTAG reset/boot behaviour;
+there is no deliberate host-DTR gate in the video stream.
 
 ### DIY Carrier PCB — REV C: Fat Shark Module + 3.5 mm AV Jack
 
@@ -133,7 +203,7 @@ board validation ([pin-routing findings](docs/FINDINGS.md#gpio27-iq-loopback-exp
 | **Rear solder jumpers** | SJ2 / BIT 7 and SJ3 / BIT 8: extra DAC branches |
 | **Artwork** | C5VRX logos on both sides; REV C and 6–8 BIT DAC markings on the back |
 
-**Current firmware remains six-bit:** leave R8/R9 unpopulated and SJ2/SJ3 open. The jumpers connect hardware only; seven/eight-bit output still needs matching firmware and electrical validation. [Assembly and jumper settings](hardware/C5VRX_JACK_DIY_V3#dac-branches-and-rear-jumpers).
+**Current firmware remains six-bit:** leave R8/R9 unpopulated and SJ2/SJ3 open. The old expansion footprints are retained in the PCB artwork only; seven/eight-bit firmware support is cancelled. Use the rewiring above for Clock Pin D10. [Assembly and jumper settings](hardware/C5VRX_JACK_DIY_V3#dac-branches-and-rear-jumpers).
 
 **Downloads:** [Gerbers + drills](hardware/C5VRX_JACK_DIY_V3/exports/C5VRX_JACK_DIY_V3-gerbers.zip) · [KiCad project](hardware/C5VRX_JACK_DIY_V3) · [BOM](hardware/C5VRX_JACK_DIY_V3/BOM.csv) · [Schematic PDF](hardware/C5VRX_JACK_DIY_V3/exports/C5VRX_JACK_DIY_V3-schematic.pdf) · [STEP](hardware/C5VRX_JACK_DIY_V3/exports/C5VRX_JACK_DIY_V3.step) · [Renders](hardware/C5VRX_JACK_DIY_V3/exports/renders/).
 
@@ -204,7 +274,7 @@ open the menu (menu: select).
 **Menu**, one list with every value in view: BAND, CHANNEL, SCAN, VIDEO
 (AUTO/NTSC/PAL), FILTER (AUTO/XNARROW/NARROW/NORMAL/WIDE), PHY FILT
 (digital filter mode), AFC (ON/OFF), CALIBRATE, OUTPUT (0.5–5.0x), GAIN
-(LEVEL/KEEL/RSSI/MAX/fixed), DEMOD (P64/U85Q), DAC TEST, EXIT. It closes after 30 s of
+(LEVEL/KEEL/RSSI/MAX/fixed), DEMOD (P64/U85Q/U50/D32), DAC TEST, EXIT. It closes after 30 s of
 inactivity (5 min in DAC TEST); entering and leaving can interrupt video.
 GAIN defaults to **LEVEL**; KEEL and RSSI are kept for comparison
 ([AGC research](docs/FINDINGS.md)). The automatic models are remembered
@@ -283,6 +353,8 @@ The C5VRX name and logos have separate terms; see [assets/BRANDING.md](assets/BR
 | C5VRX_JACK_DIY_V3 / REV C carrier | <img src="hardware/C5VRX_JACK_DIY_V3/exports/renders/03-front-straight.png" alt="C5VRX REV C PCB render" width="96" height="65"> | [Gerbers & KiCad files](hardware/C5VRX_JACK_DIY_V3) · [REV B](hardware/C5VRX_JACK_DIY_V2) · [REV A](hardware/C5VRX_JACK_DIY) |
 | Perfboard (alternative) | <img src="web/assets/perfboard.png" alt="Green perfboard" width="42" height="61"> | [View on Amazon](https://link.amazon/B0i2qqMeq) |
 | Resistor kit | <img src="web/assets/resistor-kit.png" alt="Resistor assortment in a storage case" width="72" height="72"> | [View on Amazon](https://link.amazon/B06XSBkln) |
+| Zeenko ZK06-UM LNA (optional, [more range](#optional-external-lna-more-range)) | <img src="web/assets/zeenko-zk06-um-lna.png" alt="Zeenko ZK06-UM LNA" width="72" height="72"> | [View on Amazon](https://link.amazon/B0iY2ccnV) |
+| IPX (U.FL) to SMA pigtail (XIAO to the LNA) | <img src="web/assets/ipx-to-sma-pigtail.png" alt="IPX to SMA pigtail cables" width="72" height="72"> | [View on Amazon](https://link.amazon/B07pMkNyf) |
 
 Affiliate links. As an Amazon Associate, I earn from qualifying purchases.
 All affiliate earnings go back into C5VRX development.

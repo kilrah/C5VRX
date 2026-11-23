@@ -97,7 +97,7 @@ current 71-byte payload (less when rare events occupy blocks).
 | picture (71-byte records, since 2026-10-28) | sync pulses found / expected in the decoded control windows (%, `main/picture_sync.h`: the live decoder's LUT in software, a goggle-like count with none of the AFC's gates; 0xff unknown) and how many windows. The link row's share of windows with sync is the AFC's: it reads 20-40 % at the edge and 60-90 % on a strong carrier while moving, where the picture is clean |
 | gain write reasons | writes down (attack), writes up (release) in every gain model (LEVEL, RSSI and fixed gains count their applied writes; before 2026-10-28 only KEEL-1 counted, so LEVEL logs read 0 here and in `gain_writes`), fast-path overloads forwarded (sentinel), overloads within 5 ms of a write |
 | C/N-AUTO | decision C/N plus power, M2M4 and envelope estimates (0.1 dB, -990 unknown), confidence and source (+32: a small carrier on a 4-bit-limited row, not used for decisions), flags (`main/cn_auto.h`); only noise-referenced power may drive AFC/profile decisions; kp/LP consumers are retired |
-| verified output | verified demodulator ID: 3 = `U80P64-R1`; historical IDs 1/2 = `U85Q`/`U85Q-LP` (instruction hash `1a09f5c092e8`), applied output level; flag format, guard standard and requested/active flywheel are history (removed 2026-10-25, read 0); identity is unknown unless the live transport state is verified |
+| verified output | verified demodulator ID: 3 = `U80P64-R1`, 4 = `U50P64-R1`, 5 = `D32-R2`; historical IDs 1/2 = `U85Q`/`U85Q-LP` (instruction hash `1a09f5c092e8`), applied output level (0..9 manual, `0x80 | gain x8` with AUTO OUTPUT; the tool adds `output_auto_gain`); flag format, guard standard and requested/active flywheel are history (removed 2026-10-25, read 0); identity is unknown unless the live transport state is verified |
 | output observer | history (removed with the flywheel 2026-10-25; current firmware writes 0, lock 0xff): task-side samples and fresh samples, native H/V trust (% of fresh samples), native in-phase H lines, repaired and suppressed sync tips, longest continuously observed native-H unlock (ms), observer gaps |
 | environment | temperature (degC) |
 | flags | menu, scan, calibrating, paused, fault latched, flywheel active, status screen |
@@ -136,6 +136,11 @@ uptime (ms) and type, then:
   the best radius before the fit check (0: the row too noisy to estimate) and
   the fit (1/192 nat per sample, taken at >= -38). LEVEL logs it only
   (`LEVEL_FOLD_RADIUS` 0 in agc.c).
+- **AUTO OUTPUT applied** (`output_auto`): gain x8, source sync-tip code,
+  sync depth in DAC codes x4 (`main/output_auto.h`);
+- **receiver pause ended** (`pause`): duration in ms and the first eight
+  characters of the owner tag (`SCAN`, `DCO`, `SPHASE`, ...), so a second
+  marked owned or paused names who held the receiver.
 
 ## IQ snapshots (64 x 8 KiB ring)
 
