@@ -40,7 +40,7 @@ def main() -> int:
     ap.add_argument("host")
     ap.add_argument("--secs", type=float, default=10)
     ap.add_argument("--snap", type=float, default=2)
-    ap.add_argument("--out", default="snap.png")
+    ap.add_argument("--out", default="snap.png", help="'{}' in the name numbers each snapshot")
     a = ap.parse_args()
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -58,6 +58,7 @@ def main() -> int:
     fields = set()
     status = ""
     prog = False
+    n_snap = 0
     s.sendto(b"H", dst)
     while time.monotonic() - t0 < a.secs:
         now = time.monotonic()
@@ -101,9 +102,11 @@ def main() -> int:
             fields.clear()
             last = now
         if now - last_snap >= a.snap:
-            to_rgb(y, cb, cr).save(a.out)
+            to_rgb(y, cb, cr).save(a.out.format(n_snap) if "{}" in a.out else a.out)
+            n_snap += 1
             last_snap = now
-    to_rgb(y, cb, cr).save(a.out)
+    if "{}" not in a.out:
+        to_rgb(y, cb, cr).save(a.out)
     print("saved", a.out)
     return 0
 

@@ -11,10 +11,11 @@
  *     row: frame row (interlaced: 0..height-1, field parity = row & 1;
  *     progressive: 0..height/2-1, each a field line); height: 576 PAL, 480 NTSC
  *   type 2 (status, 4/s): text "key=value ..." (the C5's status, decoder state)
+ *   type 3 (latency test result, after the frame with the row it names): text
  * Chroma: one Cb and one Cr per 8 pixels (the decoder's 64 windows across
  * the line; window i centred on pixel 8i + 4).
  * To the P4: "H" (hello, at least every STREAM_HELLO_TIMEOUT_MS), "K<key>",
- * "C<idx>", "A" as the C5 link's commands (link.h). */
+ * "C<idx>", "A" as the C5 link's commands (link.h), "T" the latency test (LED on GPIO7). */
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,7 +32,8 @@
 typedef struct {
     uint16_t row, field, height;
     uint8_t flags;
-    uint8_t pad[9];
+    uint8_t pad[5];
+    uint32_t t_us;          /* decoded (esp_timer, low 32 bits): the latency test */
     uint8_t y[CVBS_W];
     uint8_t cb[STREAM_CW], cr[STREAM_CW];
 } __attribute__((aligned(16))) stream_row_t;

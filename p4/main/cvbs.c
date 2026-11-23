@@ -939,6 +939,7 @@ static IRAM_ATTR void process_line(int64_t l, bool hsync_valid)
         r->height = (uint16_t)height;
         r->flags = (uint8_t)((s_frame_pal ? STREAM_ROW_PAL : 0) | (prog ? STREAM_ROW_PROG : 0) |
                              (colour ? STREAM_ROW_COLOUR : 0));
+        r->t_us = (uint32_t)esp_timer_get_time();
         stream_row_put();
         ++s_rows_field;
         return;

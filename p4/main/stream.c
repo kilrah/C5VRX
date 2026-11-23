@@ -25,6 +25,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -58,6 +59,7 @@ static uint32_t s_raw_frames, s_raw_err;
 static bool s_raw;
 static uint8_t s_peer_mac[6], s_own_mac[6];
 static uint16_t s_ip_id;
+static volatile bool s_led_test;            /* latency test running (below) */
 
 /* ------------------------------------------------------------ decoder side */
 
@@ -109,10 +111,11 @@ static void send_status(void)
     header(b, 2, 0, 0);
     const int n = snprintf((char *)b + HDR, sizeof(b) - HDR,
         "c5=%d idx=%d ch=%s f=%d sig=%d cn=%d.%d gain=%d gm=%s afc=%d cfo=%d vid=%d std=%s menu=%d scan=%d sp=%d dem=%s "
-        "lock=%d pal=%d fields=%lu frames=%lu clock=%d raw=%d drop=%lu",
+        "lock=%d pal=%d fields=%lu frames=%lu clock=%d raw=%d drop=%lu led=%d",
         st.online, st.idx, st.ch, st.freq, st.sig, st.cn_x10 / 10, st.cn_x10 % 10, st.gain, st.gain_mode, st.afc,
         st.cfo_khz, st.video, st.std, st.menu, st.scan, st.scan_pct, st.demod, cs.locked, cs.pal,
-        (unsigned long)cs.fields_ps, (unsigned long)cs.frames_ps, cs.clock, cs.raw_iq, (unsigned long)s_ring_full);
+        (unsigned long)cs.fields_ps, (unsigned long)cs.frames_ps, cs.clock, cs.raw_iq, (unsigned long)s_ring_full,
+        s_led_test);
     if (n > 0) send_dgram(b, HDR + (size_t)(n < (int)(sizeof(b) - HDR) ? n : (int)(sizeof(b) - HDR - 1)));
 }
 
@@ -161,6 +164,101 @@ static void check_raw(void)
     s_raw = raw;
 }
 
+/* ------------------------------------------------------------ latency test (LED)
+ *
+ * Command "T" toggles it. An LED on GPIO7 (low = on), held right in front of
+ * the FPV camera's lens, blinks 250 ms on / 250 ms off. Every decoded row
+ * carries its decode time (cvbs.c); the sender compares each row's mean luma
+ * with that row's mean while the LED was dark, and the first row after a
+ * switch-on that is LED_DELTA brighter gives the latency from the LED to the
+ * decoded line: camera, VTX, C5 and P4 together. Each result also goes to the
+ * client as a type 3 datagram right after the frame with that row, on the
+ * same path, so the Quest can time the rest. */
+#define LED_GPIO        7
+#define LED_HALF_US     250000
+#define LED_SETTLE_US   100000  /* baseline learnt from 100 ms after switch-off */
+#define LED_DELTA       24      /* luma rise that counts as lit */
+static esp_timer_handle_t s_led_timer;
+static volatile bool s_led_lit;
+static volatile uint32_t s_led_on_us, s_led_off_us;   /* low 32 bits of esp_timer */
+static uint8_t s_base[CVBS_H_MAX];
+static bool s_led_found, s_led_event;
+static uint32_t s_lat_us, s_lat_n, s_lat_sum, s_lat_min, s_lat_max, s_lat_miss;
+static uint16_t s_lat_row;
+
+static void led_tick(void *arg)
+{
+    (void)arg;
+    const uint32_t now = (uint32_t)esp_timer_get_time();
+    if (!s_led_lit) {
+        s_led_found = false;
+        s_led_on_us = now;
+        s_led_lit = true;
+        gpio_set_level(LED_GPIO, 0);
+    } else {
+        if (!s_led_found) ++s_lat_miss;
+        s_led_off_us = now;
+        s_led_lit = false;
+        gpio_set_level(LED_GPIO, 1);
+    }
+}
+
+static void led_test(bool on)
+{
+    if (on == s_led_test) return;
+    s_led_test = on;
+    if (on) {
+        s_lat_n = s_lat_sum = s_lat_max = s_lat_miss = 0;
+        s_lat_min = UINT32_MAX;
+        memset(s_base, 255, sizeof(s_base));   /* nothing is "brighter" until learnt */
+        s_led_lit = false;
+        s_led_off_us = (uint32_t)esp_timer_get_time();
+        esp_timer_start_periodic(s_led_timer, LED_HALF_US);
+    } else {
+        esp_timer_stop(s_led_timer);
+        s_led_lit = false;
+        gpio_set_level(LED_GPIO, 1);
+    }
+    ESP_LOGI(TAG, "latency test %s", on ? "on (LED on GPIO7 in front of the lens)" : "off");
+}
+
+static void led_row(const stream_row_t *r)
+{
+    if (!s_led_test || r->row >= CVBS_H_MAX) return;
+    uint32_t sum = 0;
+    for (int i = 4; i < CVBS_W; i += 8) sum += r->y[i];
+    const int m = (int)(sum / (CVBS_W / 8));
+    const uint32_t on = s_led_on_us, off = s_led_off_us;
+    const bool lit = s_led_lit && (int32_t)(r->t_us - on) >= 0;
+    if (!s_led_lit && (int32_t)(r->t_us - (off + LED_SETTLE_US)) >= 0) {
+        uint8_t *b = &s_base[r->row];
+        *b = *b == 255 ? (uint8_t)m : (uint8_t)((*b * 3 + m) / 4);
+    } else if (lit && !s_led_found && m > s_base[r->row] + LED_DELTA) {
+        s_led_found = true;
+        s_lat_us = r->t_us - on;
+        s_lat_row = r->row;
+        ++s_lat_n;
+        s_lat_sum += s_lat_us;
+        if (s_lat_us < s_lat_min) s_lat_min = s_lat_us;
+        if (s_lat_us > s_lat_max) s_lat_max = s_lat_us;
+        s_led_event = true;
+    }
+}
+
+static void send_led_event(void)
+{
+    static uint8_t b[HDR + 120];
+    header(b, 3, 0, 0);
+    const int n = snprintf((char *)b + HDR, sizeof(b) - HDR, "led lat_us=%lu row=%u n=%lu avg_us=%lu min_us=%lu "
+                           "max_us=%lu miss=%lu", (unsigned long)s_lat_us, s_lat_row, (unsigned long)s_lat_n,
+                           (unsigned long)(s_lat_sum / s_lat_n), (unsigned long)s_lat_min,
+                           (unsigned long)s_lat_max, (unsigned long)s_lat_miss);
+    send_dgram(b, HDR + (size_t)n);
+    ESP_LOGI(TAG, "LED -> decoded line %lu us (row %u), n=%lu avg %lu min %lu max %lu, missed %lu",
+             (unsigned long)s_lat_us, s_lat_row, (unsigned long)s_lat_n, (unsigned long)(s_lat_sum / s_lat_n),
+             (unsigned long)s_lat_min, (unsigned long)s_lat_max, (unsigned long)s_lat_miss);
+}
+
 static void sender_task(void *arg)
 {
     (void)arg;
@@ -188,6 +286,7 @@ static void sender_task(void *arg)
             header(b, 1, r->field, r->height);
             int n = 0;
             for (;;) {
+                led_row(r);
                 uint8_t *o = b + HDR + n * ROW_WIRE;
                 put16(o, r->row);
                 o[2] = r->flags;
@@ -216,6 +315,7 @@ static void sender_task(void *arg)
                 send_dgram(b, len);
             }
             s_rows_sent += (uint32_t)n;
+            if (s_led_event) { s_led_event = false; send_led_event(); }   /* after the row's frame */
         }
         if (s_raw) ncm_host_flush();   /* the burst's frames in as few USB transfers as possible */
     }
@@ -245,6 +345,7 @@ static void command_task(void *arg)
         if (m[0] == 'K' && m[1]) link_key(m[1]);
         else if (m[0] == 'C' && m[1] >= '0' && m[1] <= '9') link_tune(atoi(m + 1));
         else if (m[0] == 'A') link_afc_toggle();
+        else if (m[0] == 'T') led_test(!s_led_test);
     }
 }
 
@@ -412,6 +513,12 @@ void stream_start(void)
      * the decoder's bursts held it off long enough to overflow the ring (~5 %
      * of the rows dropped, 2026-11-23). Hellos and commands above it. lwIP
      * core locking: a sendto (status, the lwIP path) runs in the sender. */
+    const gpio_config_t led = {.pin_bit_mask = 1ULL << LED_GPIO, .mode = GPIO_MODE_OUTPUT};
+    gpio_set_level(LED_GPIO, 1);   /* off */
+    gpio_config(&led);
+    gpio_set_level(LED_GPIO, 1);
+    const esp_timer_create_args_t ta = {.callback = led_tick, .name = "led"};
+    ESP_ERROR_CHECK(esp_timer_create(&ta, &s_led_timer));
     xTaskCreatePinnedToCore(command_task, "stream_cmd", 3072, NULL, 12, NULL, 0);
     xTaskCreatePinnedToCore(sender_task, "stream", 4096, NULL, 10, NULL, 0);
     ESP_LOGI(TAG, "USB host on the Type-A ports (Quest, NCM: P4 %s), UDP port %d", NCM_HOST_IP, STREAM_PORT);

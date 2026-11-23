@@ -46,6 +46,31 @@ Quest: app "C5VRX FPV" (DJI-on-Quest repository, quest-view flavor fpv): rows
 - The sender runs on core 0 next to the fill task. On core 1, below the
   decoder, the decoder's bursts held it off long enough to overflow the ring.
 
+## Latency
+
+Test built in (command `T`, the Quest app's "Latency test" button): an LED
+on P4 GPIO7 (low = on), held right in front of the FPV camera's lens, blinks
+250 ms on / 250 ms off. Every decoded row carries its decode time; the P4
+compares each row's mean luma with that row's while the LED was dark, and
+the first row 24 levels brighter after a switch-on gives the latency from
+the LED to the decoded line (camera, VTX, C5, P4). A result datagram follows
+that row's frame, and the Quest app times its arrival to the end of the next
+frame it draws (glFinish).
+
+Bench, 2026-11-23 (PAL camera/VTX on B5, D32-R2 on the C5, Quest 3 at
+90 Hz, USB):
+
+| Part | Median | Range |
+|---|---|---|
+| LED -> line decoded on the P4 | 1.9 ms | 0-3.5 ms (another run 3.6-3.8 ms) |
+| P4 -> Quest, drawn by the app | 5 ms | 1.6-29 ms |
+| Quest compositor and display | not measured | ~1-2 frames at 90 Hz (11-22 ms) expected |
+
+The camera is a rolling shutter: whatever row it scans when the LED lights
+brightens within a few milliseconds, and that line leaves the P4 at once
+(the first bright row varied between ~130 and ~350). The app part includes
+waiting for the next frame of a 90 Hz display (up to 11 ms).
+
 ## Wiring
 
 As [P4LINK.md](P4LINK.md), on the Waveshare 40-pin header (Raspberry Pi
@@ -97,7 +122,8 @@ status, a PNG of the newest picture).
 
 ## Open items
 
-- Latency, glass to glass (LED in front of the camera, Quest and LED filmed
-  at 240 fps); the Quest view is a 2D panel for now.
+- Latency from the Quest's display on (compositor, panel): only a camera
+  filming the LED and the lens together can see it; the Quest view is a 2D
+  panel for now (an OpenXR layer would cut it).
 - Horizontal sync tears on sharp transitions to white with one camera
   (operator: probably a too-hot signal); compare with other systems.
