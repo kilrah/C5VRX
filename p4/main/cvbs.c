@@ -46,6 +46,12 @@
 #include "freertos/task.h"
 #include "hal/dma_types.h"
 #include "link.h"
+#ifdef __riscv
+#include "sdkconfig.h"
+#endif
+#if CONFIG_C5VRX_P4_QUEST
+#include "stream.h"   /* Quest build: rows go out on the network, not into frames */
+#endif
 #include "soc/axi_dma_struct.h"
 #ifdef __riscv
 #include "soc/hp_system_struct.h"
@@ -468,8 +474,10 @@ static IRAM_ATTR void publish_frame(void)
  * the other's rows from three frames back, and the picture's bottom jumped.
  * Such a frame takes one more field instead (a repeated picture). */
 static int s_frame_fields;
+static uint16_t s_field_no;          /* every field, for the network stream */
 static IRAM_ATTR void field_end(bool frame_end)
 {
+    ++s_field_no;
     ++s_frame_fields;
     if (frame_end && (s_same_parity >= 2 || s_frame_fields >= 2)) {
         publish_frame();
@@ -625,6 +633,7 @@ static void row_send(uint8_t *dst, uint8_t *flush)
     __atomic_store_n(&s_row_head, s_row_head + 1u, __ATOMIC_RELEASE);
 }
 
+#if !CONFIG_C5VRX_P4_QUEST   /* the Quest build sends rows, it builds no frames */
 static void copier_task(void *arg)
 {
     (void)arg;
@@ -641,6 +650,7 @@ static void copier_task(void *arg)
         vTaskDelay(1);
     }
 }
+#endif
 
 /* n raw codes from position from into a linear buffer. */
 static IRAM_ATTR void raw_copy(uint8_t *dst, uint32_t from, int n)
@@ -768,16 +778,22 @@ static IRAM_ATTR void pack_send(const uint8_t *yb, const uint8_t *c, uint8_t *ds
     row_send(dst, flush);
 }
 
+/* The row's Y into yb (CVBS_W bytes, 16-byte aligned). */
+static IRAM_ATTR void row_luma(int64_t l, bool filter, uint8_t *yb)
+{
+    const int64_t start = l + (int64_t)(s_frame_pal ? 109 : 101) * Q16 + Q16 / 2;
+    static uint8_t a[16 + CVBS_W + 32] __attribute__((aligned(16)));
+    hist_copy(a, (start >> 16) - 16, 16 + CVBS_W + 16);   /* a[16 + i] = sample i */
+    cvbs_luma16((const int8_t *)a + 16, yb, CVBS_W / 16, filter ? &s_kf[0][0] : &s_ku[0][0],
+                filter ? s_kshift : s_kshift_u);
+}
+
 /* dst2/c2: the twin row of a progressive field (same Y), or NULL. */
 static IRAM_ATTR void row_out(int64_t l, bool filter, const uint8_t *c, uint8_t *dst, uint8_t *flush,
                               const uint8_t *c2, uint8_t *dst2, uint8_t *flush2)
 {
-    const int64_t start = l + (int64_t)(s_frame_pal ? 109 : 101) * Q16 + Q16 / 2;
-    static uint8_t a[16 + CVBS_W + 32] __attribute__((aligned(16)));
     static uint8_t yb[CVBS_W] __attribute__((aligned(16)));
-    hist_copy(a, (start >> 16) - 16, 16 + CVBS_W + 16);   /* a[16 + i] = sample i */
-    cvbs_luma16((const int8_t *)a + 16, yb, CVBS_W / 16, filter ? &s_kf[0][0] : &s_ku[0][0],
-                filter ? s_kshift : s_kshift_u);
+    row_luma(l, filter, yb);
     {   /* TEMP: near-black rows as drawn */
         uint32_t sum = 0;
         for (int i = 0; i < CVBS_W; i += 4) sum += yb[i];
@@ -901,6 +917,33 @@ static IRAM_ATTR void process_line(int64_t l, bool hsync_valid)
      * half-line field. */
     const int top_parity = s_frame_pal ? 0 : 1;
     const int row = prog ? k : 2 * k + ((s_parity != top_parity) ^ s_swap);
+#if CONFIG_C5VRX_P4_QUEST
+    {   /* The line leaves at once: Y, and Cb and Cr at window resolution. */
+        stream_row_t *r = stream_row_get();
+        if (!r) return;
+        static uint8_t cb[CVBS_W / 2] __attribute__((aligned(4))), cr[CVBS_W / 2] __attribute__((aligned(4)));
+        const bool colour = chroma_line(l, false, cb, cr);
+        row_luma(l, colour, r->y);
+        if (colour) {
+            /* Window i's value is the mean of pairs 4i+1 and 4i+2 (chroma_pairs). */
+            for (int i = 0; i < STREAM_CW; ++i) {
+                r->cb[i] = (uint8_t)((cb[4 * i + 1] + cb[4 * i + 2] + 1) >> 1);
+                r->cr[i] = (uint8_t)((cr[4 * i + 1] + cr[4 * i + 2] + 1) >> 1);
+            }
+        } else {
+            memset(r->cb, 128, sizeof(r->cb));
+            memset(r->cr, 128, sizeof(r->cr));
+        }
+        r->row = (uint16_t)row;
+        r->field = s_field_no;
+        r->height = (uint16_t)height;
+        r->flags = (uint8_t)((s_frame_pal ? STREAM_ROW_PAL : 0) | (prog ? STREAM_ROW_PROG : 0) |
+                             (colour ? STREAM_ROW_COLOUR : 0));
+        stream_row_put();
+        ++s_rows_field;
+        return;
+    }
+#endif
     /* YUV420: Cb on even rows, Cr on odd ones. A progressive field (the
      * C5's menu and boot screen in the P4-link build, some cameras) fills
      * both rows of its line. */
@@ -1156,8 +1199,10 @@ esp_err_t cvbs_start(void)
     ESP_LOGI(TAG, "capture on %u MHz bus clock, DMA channel %d", (unsigned)(LINK_CLK_HZ / 1000000), s_dma_ch);
     if (xTaskCreatePinnedToCore(decode_task, "cvbs", 6144, NULL, configMAX_PRIORITIES - 2, &s_task, 1) != pdPASS)
         return ESP_ERR_NO_MEM;
+#if !CONFIG_C5VRX_P4_QUEST
     if (xTaskCreatePinnedToCore(copier_task, "cvbs_rows", 3072, NULL, configMAX_PRIORITIES - 3, NULL, 0) != pdPASS)
         return ESP_ERR_NO_MEM;
+#endif
     return xTaskCreatePinnedToCore(fill_task, "cvbs_fill", 4096, NULL, configMAX_PRIORITIES - 2, &s_fill_task, 0) == pdPASS
                ? ESP_OK : ESP_ERR_NO_MEM;
 }

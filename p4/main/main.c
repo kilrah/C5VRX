@@ -4,7 +4,14 @@
  * https://github.com/Twotoz/C5VRX - https://twotoz.github.io/C5VRX/ */
 #include "board.h"
 #include "cvbs.h"
+#include "sdkconfig.h"
+#if CONFIG_C5VRX_P4_QUEST
+#include "stream.h"
+#else
 #include "display.h"
+#include "ui.h"
+#include "uvc.h"
+#endif
 #include "esp_ldo_regulator.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -13,8 +20,6 @@
 #include <stdio.h>
 #include "link.h"
 #include "nvs_flash.h"
-#include "ui.h"
-#include "uvc.h"
 
 static const char *TAG = "c5vrx_p4";
 
@@ -36,6 +41,21 @@ void app_main(void)
     const esp_err_t cvbs_err = cvbs_start();
     if (cvbs_err != ESP_OK) ESP_LOGE(TAG, "capture: %s", esp_err_to_name(cvbs_err));
 
+#if CONFIG_C5VRX_P4_QUEST
+    /* Waveshare board: the picture goes to a Meta Quest (docs/P4QUEST.md). */
+    link_start();
+    stream_start();
+    ESP_LOGI(TAG, "ready (Quest stream)");
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        printf("BOOT capture=%s heap_internal=%u largest=%u\n", esp_err_to_name(cvbs_err),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+        cvbs_debug_print();
+        link_debug_print();
+        stream_debug_print();
+    }
+#else
     ESP_ERROR_CHECK(display_start());
     if ((err = ui_start()) != ESP_OK) ESP_LOGE(TAG, "touch: %s (no settings column input)", esp_err_to_name(err));
     link_start();
@@ -56,4 +76,5 @@ void app_main(void)
                (unsigned long)display_ppa_errors(), (unsigned long)display_panel_ppa_us(),
                (unsigned long)display_uvc_ppa_us(), (unsigned long)uvc_jpeg_us());
     }
+#endif
 }

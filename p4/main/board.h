@@ -12,10 +12,23 @@
 #define LINK_DATA_BITS      8
 #define LINK_CLK_GPIO       20      /* JP1 pin 17, the C5's PARLIO TX clock (GPIO8) */
 #define LINK_CLK_HZ         40000000u
+#if defined(__has_include)
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"   /* not in the host test (test/stub) */
+#endif
+#endif
+#if CONFIG_C5VRX_P4_QUEST
+/* Waveshare ESP32-P4-Module-DEV-KIT: GPIO37/38 carry the board's own CH343
+ * USB-UART, whose TX held GPIO38 against the C5's (2026-11-23); header pins
+ * 11 and 12 instead. */
+#define LINK_UART_RX_GPIO   21      /* header pin 11, from C5 GPIO11 */
+#define LINK_UART_TX_GPIO   22      /* header pin 12, to C5 GPIO12 */
+#else
 /* UART0's default pins (not on JP1), driven by link.c's UART1: the boot
  * log (console UART0) goes out on GPIO37 until then; the C5 ignores it. */
 #define LINK_UART_RX_GPIO   38      /* from C5 GPIO11 */
 #define LINK_UART_TX_GPIO   37      /* to C5 GPIO12 */
+#endif
 /* GPIO39..48 are powered by the on-chip LDO VO4 (also the TF card's
  * supply): it is set to 3.3 V before those pins are used. */
 #define LINK_LDO_CHAN       4

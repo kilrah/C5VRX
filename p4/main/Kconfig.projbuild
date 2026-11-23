@@ -1,0 +1,10 @@
+menu "C5VRX P4"
+    choice C5VRX_P4_BOARD
+        prompt "Board"
+        default C5VRX_P4_JC1060
+        config C5VRX_P4_JC1060
+            bool "Guition JC1060P470C: LCD, touch, USB webcam"
+        config C5VRX_P4_QUEST
+            bool "Waveshare ESP32-P4-Module-DEV-KIT: stream to a Meta Quest (USB NCM / Ethernet)"
+    endchoice
+endmenu

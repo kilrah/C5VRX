@@ -1,0 +1,16 @@
+# Waveshare ESP32-P4-Module-DEV-KIT -> Meta Quest (docs/P4QUEST.md), on top of
+# sdkconfig.defaults:
+#   idf.py -B build-quest -DSDKCONFIG=build-quest/sdkconfig "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.quest.defaults" build
+CONFIG_C5VRX_P4_QUEST=y
+# Console on the USB Serial/JTAG Type-C port (as the board's other firmware);
+# UART0's pins GPIO37/38 carry only the C5 link.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# The Quest sits behind the board's CH334F hub on the high-speed host port.
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+# USB host transfer buffers in PSRAM: internal DMA RAM holds the capture ring.
+CONFIG_USB_HOST_DWC_DMA_CAP_MEMORY_IN_PSRAM=y
+# lwIP's task on core 0; the stream sender (core 1) sends in its own context.
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+CONFIG_LWIP_TCPIP_CORE_LOCKING=y
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=16
