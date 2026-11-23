@@ -10,8 +10,9 @@ received it.
 Status (2026-11-23, bench, PAL VTX on E5, C5 decoder U80P64-R1 codes): the
 Quest receives all 14,400 lines a second (50 fields/s), none dropped on the
 P4, none lost on the link; colour picture in the PC receiver's snapshot, not
-yet looked at in the headset. Raw IQ (`dem=RAW`) did
-not lock on this wiring yet (see Open items).
+later looked at in the headset (operator: fine). Raw IQ (`dem=RAW`, the P4's
+BitScrambler demodulates) and U85Q: also full rate, locked, after a bad D0
+(GPIO2) wire was replaced; before that raw IQ found almost no hsyncs.
 
 ## Pipeline
 
@@ -23,8 +24,12 @@ P4 (Waveshare): PARLIO RX -> fill (core 0) -> decoder (core 1, cvbs.c)
   -> sender (core 0): Ethernet/IP/UDP headers written by hand, two lines a
      frame, a millisecond's lines in one USB transfer (ncm_host.c)
   -> USB high-speed host -> board hub -> Type-A -> Quest (CDC-NCM, 192.168.7.x)
-Quest: "C5VRX FPV" (DJI View app, FpvActivity): rows into textures as they
-  arrive, YCbCr -> RGB in a shader, 4:3, drawn at every display refresh
+Quest: app "C5VRX FPV" (DJI-on-Quest repository, quest-view flavor fpv): rows
+  into textures as they arrive, YCbCr -> RGB in a shader, 4:3, drawn at every
+  display refresh; deinterlacing "bob" (default) shows the newest field
+  everywhere (the field being received above its newest line, the previous one
+  below, each interpolated to full height) or "weave"; buttons for channel,
+  band, scan, AFC and the C5's menu
 ```
 
 - 14,400 lines/s (PAL 288 x 50, NTSC 240 x 60) x 644 bytes = ~75 Mbit/s with
@@ -92,12 +97,7 @@ status, a PNG of the newest picture).
 
 ## Open items
 
-- Raw IQ: with `dem=RAW` the P4 found almost no hsyncs and the bus mode kept
-  switching; the codes (U80P64-R1) lock at once. D0 (Q0) toggled little at
-  first; check the sampling edge (CLK RISE/FALL) and the wires.
 - Latency, glass to glass (LED in front of the camera, Quest and LED filmed
   at 240 fps); the Quest view is a 2D panel for now.
-- Interlace: rows are woven (both fields); bob or a newest-row scheme for
-  motion.
-- Controls from the Quest (channel, scan, C5 menu): the P4 takes the
-  commands; the Quest app has no UI for them yet.
+- Horizontal sync tears on sharp transitions to white with one camera
+  (operator: probably a too-hot signal); compare with other systems.
