@@ -64,7 +64,8 @@ Bench, 2026-11-23 (PAL camera/VTX on B5, D32-R2 on the C5, Quest 3 at
 |---|---|---|
 | LED -> line decoded on the P4 | 1.9 ms | 0-3.5 ms (another run 3.6-3.8 ms) |
 | P4 -> Quest, drawn by the app | 5 ms | 1.6-29 ms |
-| Quest compositor and display | not measured | ~1-2 frames at 90 Hz (11-22 ms) expected |
+| Quest compositor and display (2D panel) | ~50 ms | the rest of glass to glass |
+| **Glass to glass** (phone filming the LED and a Quest lens at 480 fps) | **~60 ms** | 29 frames; the same with "bob, newest lines" and "bob, whole fields" |
 
 The camera is a rolling shutter: whatever row it scans when the LED lights
 brightens within a few milliseconds, and that line leaves the P4 at once
@@ -122,8 +123,8 @@ status, a PNG of the newest picture).
 
 ## Open items
 
-- Latency from the Quest's display on (compositor, panel): only a camera
-  filming the LED and the lens together can see it; the Quest view is a 2D
-  panel for now (an OpenXR layer would cut it).
+- Latency: ~50 of the ~60 ms glass to glass are the Quest's 2D panel path
+  (Android buffering, Horizon OS compositor, display). An OpenXR app drawing
+  the picture as its own layer would skip the panel path.
 - Horizontal sync tears on sharp transitions to white with one camera
   (operator: probably a too-hot signal); compare with other systems.
