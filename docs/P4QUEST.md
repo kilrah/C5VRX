@@ -41,8 +41,16 @@ Quest: app "C5VRX FPV" (DJI-on-Quest repository, quest-view flavor fpv): rows
 - Through lwIP a UDP send cost 70 us on an idle P4 and 250-600 us next to the
   capture and decoder: only half the lines got out. To the Quest the rows go
   past lwIP (headers by hand, UDP checksum 0, allowed in IPv4); status and
-  commands still use lwIP, which also keeps the Quest's ARP entry. Ethernet
-  (PC tools) uses lwIP: about half the lines.
+  commands still use lwIP, which also keeps the Quest's ARP entry.
+- Ethernet (PC tools, 100 Mbit/s): to a client on the P4's Ethernet subnet
+  the same two-row frames go straight to the EMAC driver (`esp_eth_transmit`).
+  Its DMA buffers are 1408 B (one frame each), 30 for TX (~4 ms of rows),
+  with the transmit mutex on, since lwIP's task sends too; when all are
+  queued the sender waits a tick (`eth_full` in the `STREAM` line).
+  Through lwIP only ~10,400 of the 14,400 rows/s got out (the P4's ring
+  overflowed, ~4,000 rows/s); past lwIP all of them, nothing lost, 30 s
+  (2026-11-24, PAL, PC on the LAN). A client behind a router still goes
+  through lwIP.
 - The sender runs on core 0 next to the fill task. On core 1, below the
   decoder, the decoder's bursts held it off long enough to overflow the ring.
 
@@ -120,6 +128,14 @@ Commands to the P4: `K<key>`, `C<idx>`, `A` as the link's (`link.h`).
 
 PC receiver: `python p4/tools/stream_view.py P4_ADDRESS` (rates, the P4's
 status, a PNG of the newest picture).
+
+PC viewer: `python p4/tools/video_view.py P4_ADDRESS` (numpy, OpenCV):
+the live picture in a window, deinterlaced as the Quest app (F2: "bob,
+whole fields", the default, "bob, newest lines", "weave"), the status underneath with
+rows/s at the PC, rows the P4 dropped and missing datagrams; arrows tune
+channel/band, `a` AFC, `t` latency test, the C5 console keys (`o` menu,
+`n`/`x`/`e` inside it, `G`, `f`, `v`, `s`, `m`, ...), F5 PNG, F11 full
+screen. Over Ethernet (c5vrx-p4.local) it shows all 14,400 rows/s.
 
 ## Open items
 
