@@ -12,9 +12,14 @@
  * burst as one USB transfer (ncm_host_flush). Through lwIP a send cost 70 us
  * idle and ~250-600 us next to the capture and decoder, and only half the
  * rows got out; past lwIP, all 14,400 rows/s with none dropped (2026-11-23).
- * Elsewhere (Ethernet, the PC tools) through lwIP, six rows a datagram (IP
- * fragments it): about half the rows. The status goes through lwIP either
- * way, which keeps the Quest's ARP entry fresh. */
+ * To a client on the Ethernet subnet (the PC tools) the same frames go
+ * straight to the EMAC driver (esp_eth_transmit, which copies them into its
+ * DMA buffers): through lwIP, six rows a datagram (IP fragments it), only
+ * ~10,400 of the 14,400 rows/s got out (2026-11-24). The EMAC's DMA buffers
+ * hold one two-row frame each (sdkconfig.quest.defaults); when all are queued
+ * the sender waits a tick, the ring holds 6.7 ms. Anywhere else (a client
+ * behind a router) through lwIP. The status goes through lwIP either way,
+ * which keeps the client's ARP entry fresh. */
 #include "stream.h"
 
 #include <stdio.h>
@@ -24,6 +29,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -31,7 +37,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "link.h"
+#include "lwip/etharp.h"
 #include "lwip/sockets.h"
+#include "lwip/tcpip.h"
 #include "ncm_host.h"
 #include "usb/usb_host.h"
 
@@ -56,8 +64,13 @@ static uint32_t s_rows_sent, s_dgrams, s_send_err, s_ring_full, s_cmds;
 static uint32_t s_send_us, s_send_max_us, s_send_n;   /* send time since the last print */
 static uint32_t s_raw_frames, s_raw_err;
 /* Raw path: the client's MAC (from lwIP's ARP table), the link's own. */
-static bool s_raw;
+typedef enum { RAW_NONE, RAW_USB, RAW_ETH } raw_t;
+static raw_t s_raw;
 static uint8_t s_peer_mac[6], s_own_mac[6];
+static uint32_t s_own_ip;                   /* network order */
+static esp_eth_handle_t s_eth;
+static esp_netif_t *s_eth_netif;
+static uint32_t s_eth_full;                 /* EMAC DMA buffers all queued: waited a tick */
 static uint16_t s_ip_id;
 static volatile bool s_led_test;            /* latency test running (below) */
 
@@ -141,8 +154,8 @@ static void l2_headers(uint8_t *f, size_t n)
     ip[6] = 0x40; ip[7] = 0;                  /* DF */
     ip[8] = 64; ip[9] = 17;                   /* TTL, UDP */
     ip[10] = ip[11] = 0;
-    const uint32_t src = esp_ip4addr_aton(NCM_HOST_IP), dst = s_client.sin_addr.s_addr;
-    memcpy(ip + 12, &src, 4);
+    const uint32_t dst = s_client.sin_addr.s_addr;
+    memcpy(ip + 12, &s_own_ip, 4);
     memcpy(ip + 16, &dst, 4);
     const uint16_t c = ip_csum(ip);
     ip[10] = (uint8_t)(c >> 8); ip[11] = (uint8_t)c;
@@ -154,14 +167,57 @@ static void l2_headers(uint8_t *f, size_t n)
     u[6] = u[7] = 0;                          /* no UDP checksum */
 }
 
-/* The raw path applies to a client on the USB link whose MAC lwIP knows. */
+/* The client's MAC on the Ethernet subnet, if lwIP's ARP table has it. */
+static bool eth_peer_mac(uint32_t ip)
+{
+    esp_netif_ip_info_t info;
+    if (!s_eth_netif || !esp_netif_is_netif_up(s_eth_netif) || esp_netif_get_ip_info(s_eth_netif, &info) != ESP_OK ||
+        !info.ip.addr || ((ip ^ info.ip.addr) & info.netmask.addr))
+        return false;
+    struct netif *nif = esp_netif_get_netif_impl(s_eth_netif);
+    const ip4_addr_t a = {.addr = ip};
+    struct eth_addr *ea = NULL;
+    const ip4_addr_t *ia = NULL;
+    LOCK_TCPIP_CORE();
+    const ssize_t i = etharp_find_addr(nif, &a, &ea, &ia);
+    if (i >= 0) memcpy(s_peer_mac, ea->addr, 6);
+    UNLOCK_TCPIP_CORE();
+    if (i < 0) return false;
+    esp_netif_get_mac(s_eth_netif, s_own_mac);
+    s_own_ip = info.ip.addr;
+    return true;
+}
+
+/* The raw path applies to a client on the USB link or the Ethernet subnet
+ * whose MAC lwIP knows. */
 static void check_raw(void)
 {
     const uint32_t net = esp_ip4addr_aton(NCM_HOST_IP) & 0x00ffffffu;   /* /24, network order */
-    const bool usb = (s_client.sin_addr.s_addr & 0x00ffffffu) == net;
-    const bool raw = usb && ncm_host_peer_mac(s_client.sin_addr.s_addr, s_peer_mac, s_own_mac);
-    if (raw != s_raw) ESP_LOGI(TAG, "rows %s", raw ? "past lwIP (USB link)" : "through lwIP");
+    const uint32_t ip = s_client.sin_addr.s_addr;
+    raw_t raw = RAW_NONE;
+    if ((ip & 0x00ffffffu) == net) {
+        if (ncm_host_peer_mac(ip, s_peer_mac, s_own_mac)) {
+            s_own_ip = esp_ip4addr_aton(NCM_HOST_IP);
+            raw = RAW_USB;
+        }
+    } else if (eth_peer_mac(ip)) {
+        raw = RAW_ETH;
+    }
+    if (raw != s_raw)
+        ESP_LOGI(TAG, "rows %s", raw == RAW_USB ? "past lwIP (USB link)" : raw == RAW_ETH ? "past lwIP (Ethernet)"
+                                                                                       : "through lwIP");
     s_raw = raw;
+}
+
+/* One frame to the EMAC; all its DMA buffers queued: wait a tick, at most 5. */
+static esp_err_t eth_send_frame(uint8_t *f, size_t n)
+{
+    for (int i = 0;; ++i) {
+        const esp_err_t e = esp_eth_transmit(s_eth, f, n);
+        if (e != ESP_ERR_NO_MEM || i == 5) return e;
+        ++s_eth_full;
+        vTaskDelay(1);
+    }
 }
 
 /* ------------------------------------------------------------ latency test (LED)
@@ -273,7 +329,7 @@ static void sender_task(void *arg)
         }
         if (!s_active) {
             __atomic_store_n(&s_tail, s_head, __ATOMIC_RELEASE);   /* drop what is left */
-            s_raw = false;
+            s_raw = RAW_NONE;
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
@@ -305,7 +361,9 @@ static void sender_task(void *arg)
             if (s_raw) {
                 const int64_t t0 = esp_timer_get_time();
                 l2_headers(f, len);
-                if (ncm_host_send_frame(f, L2HDR + len) == ESP_OK) ++s_raw_frames;
+                const esp_err_t e = s_raw == RAW_USB ? ncm_host_send_frame(f, L2HDR + len)
+                                                     : eth_send_frame(f, L2HDR + len);
+                if (e == ESP_OK) ++s_raw_frames;
                 else ++s_raw_err;
                 const uint32_t dt = (uint32_t)(esp_timer_get_time() - t0);
                 s_send_us += dt;
@@ -317,7 +375,7 @@ static void sender_task(void *arg)
             s_rows_sent += (uint32_t)n;
             if (s_led_event) { s_led_event = false; send_led_event(); }   /* after the row's frame */
         }
-        if (s_raw) ncm_host_flush();   /* the burst's frames in as few USB transfers as possible */
+        if (s_raw == RAW_USB) ncm_host_flush();   /* the burst's frames in as few USB transfers as possible */
     }
 }
 
@@ -356,10 +414,10 @@ void stream_link_down(void)
 
 void stream_debug_print(void)
 {
-    printf("STREAM active=%d client=%s raw=%d rows=%lu dgrams=%lu raw_frames=%lu raw_err=%lu send_err=%lu "
-           "ring_full=%lu cmds=%lu send_avg_us=%lu max_us=%lu\n", s_active, inet_ntoa(s_client.sin_addr), s_raw,
-           (unsigned long)s_rows_sent, (unsigned long)s_dgrams, (unsigned long)s_raw_frames,
-           (unsigned long)s_raw_err, (unsigned long)s_send_err, (unsigned long)s_ring_full, (unsigned long)s_cmds,
+    printf("STREAM active=%d client=%s raw=%d rows=%lu dgrams=%lu raw_frames=%lu raw_err=%lu eth_full=%lu "
+           "send_err=%lu ring_full=%lu cmds=%lu send_avg_us=%lu max_us=%lu\n", s_active,
+           inet_ntoa(s_client.sin_addr), (int)s_raw, (unsigned long)s_rows_sent, (unsigned long)s_dgrams,
+           (unsigned long)s_raw_frames, (unsigned long)s_raw_err, (unsigned long)s_eth_full, (unsigned long)s_send_err, (unsigned long)s_ring_full, (unsigned long)s_cmds,
            (unsigned long)(s_send_n ? s_send_us / s_send_n : 0), (unsigned long)s_send_max_us);
     s_send_us = s_send_max_us = s_send_n = 0;
     ncm_host_log_stats();
@@ -490,6 +548,8 @@ static void eth_start(void)
     esp_netif_t *netif = esp_netif_new(&netif_config);
     esp_netif_set_hostname(netif, "c5vrx-p4");
     ESP_ERROR_CHECK(esp_netif_attach(netif, esp_eth_new_netif_glue(eth)));
+    s_eth = eth;
+    s_eth_netif = netif;
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, got_ip, NULL));
     ESP_ERROR_CHECK(esp_eth_start(eth));
 }

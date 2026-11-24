@@ -14,3 +14,10 @@ CONFIG_USB_HOST_DWC_DMA_CAP_MEMORY_IN_PSRAM=y
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 CONFIG_LWIP_TCPIP_CORE_LOCKING=y
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=16
+# Rows to an Ethernet client go straight to the EMAC (stream.c): one DMA
+# buffer per two-row frame (1342 B; a multiple of 64 on the P4), 30 of them
+# (~4 ms of rows), and a transmit mutex since lwIP's task sends too.
+CONFIG_ETH_DMA_BUFFER_SIZE=1408
+CONFIG_ETH_DMA_TX_BUFFER_NUM=30
+CONFIG_ETH_DMA_RX_BUFFER_NUM=10
+CONFIG_ETH_TRANSMIT_MUTEX=y
