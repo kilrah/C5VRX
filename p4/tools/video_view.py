@@ -224,6 +224,29 @@ def status_bar(rx, s, w, rates, now):
     return bar
 
 
+def window_size(default):
+    """The window's drawing area (width, height); the default until it is known."""
+    try:
+        _, _, w, h = cv2.getWindowImageRect(WIN)
+    except cv2.error:
+        return default
+    return (w, h) if w > 16 and h > BAR + 16 else default
+
+
+def compose(pic, bar_fn, size):
+    """The picture at 4:3, as large as fits above the status bar, centred on black, drawn at the
+    window's own size: OpenCV then never scales it (maximized or full screen it would stretch)."""
+    w, h = size
+    out = np.zeros((h, w, 3), np.uint8)
+    ah = h - BAR
+    ph = min(ah, w * 3 // 4)
+    pw = ph * 4 // 3
+    x, y = (w - pw) // 2, (ah - ph) // 2
+    out[y:y + ph, x:x + pw] = cv2.resize(pic, (pw, ph), interpolation=cv2.INTER_LINEAR)
+    out[ah:] = bar_fn(w)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("host", help="the P4's address (c5vrx-p4.local, USB NCM 192.168.7.1, ...)")
@@ -240,7 +263,7 @@ def main() -> int:
     full = False
     ph = a.height
     pw = ph * 4 // 3
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_FREERATIO)
     cv2.resizeWindow(WIN, pw, ph + BAR)
     cv2.setWindowTitle(WIN, f"{WIN} - {a.host}")
 
@@ -249,6 +272,7 @@ def main() -> int:
     drop0 = None
     rates = ""
     img = None
+    size = (pw, ph + BAR)
     drawn_field = -1
     while True:
         new = fr.add(rx.take())
@@ -269,10 +293,12 @@ def main() -> int:
             n_rows = n_draw = 0
             t_rate = now
         # whole fields: draw once a field is complete; otherwise whenever rows arrived
+        ws = window_size(size)
+        if ws != size:
+            size, img = ws, None
         if img is None or (new and (fr.prog or deint != WHOLE or fr.fields != drawn_field)):
             drawn_field = fr.fields
-            pic = cv2.resize(fr.bgr(deint), (pw, ph), interpolation=cv2.INTER_LINEAR)
-            img = np.vstack((pic, status_bar(rx, rx.status, pw, rates, now)))
+            img = compose(fr.bgr(deint), lambda w: status_bar(rx, rx.status, w, rates, now), size)
             cv2.imshow(WIN, img)
             n_draw += 1
         k = cv2.waitKeyEx(1)
